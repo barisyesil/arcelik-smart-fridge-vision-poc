@@ -16,7 +16,7 @@ Amaç yalnızca çalışan bir demo üretmek değil; aşağıdaki üç ürün va
 
 > **Önemli:** Sistemin ürettiği `estimated_freshness_date`, üretici tarafından
 > verilen son tüketim tarihi veya tavsiye edilen tüketim tarihi değildir. Bu
-> değer, fotoğraf tarihi ve raf ömrü kurallarından türetilen muhafazakâr bir
+> değer, fotoğraf tarihi ve raf ömrü kurallarından türetilen muhafaza edilmiş bir
 > tahmindir.
 
 ## Projeyi nasıl tasarladık?
