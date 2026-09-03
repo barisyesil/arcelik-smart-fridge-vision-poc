@@ -73,16 +73,34 @@ ve Faz 1 kapsam sınırını birlikte gösterir.*
 *Sade görünüm; yükleme izni, doğrudan S3 aktarımı, görsel analiz, envanter
 yazımı ve başarısız asenkron çağrıların DLQ'ya yönlendirilmesini özetler.*
 
-## Faz 1 kapsamı
+## Faz 1'de neler yaptık?
 
-| Kapsamda | Sonraki fazlarda |
+Faz 1'de önce projenin temel fikrini uçtan uca çalıştırmaya odaklandık:
+kullanıcı fotoğrafı yüklesin, ürünler tanınsın ve sonuç envanterde görülsün.
+Bu fazda hazırladığımız parçalar şunlar:
+
+| Hazırladığımız parça | Bu projede ne yapıyor? |
 |---|---|
-| Web tabanlı test arayüzü | Mobil uygulama |
-| Fotoğraftan ürün tanıma | Son kullanıcılı kimlik doğrulama |
-| Kategori bazlı tazelik tahmini | Etiket/SKT OCR |
-| Temel envanter listeleme, düzeltme ve silme | Push bildirimleri |
-| Alan bazlı güven skoru | İnsan onay kuyruğu |
-| Düşük maliyet odaklı AWS altyapısı | Step Functions ve veri gölü akışları |
+| **Web demo arayüzü** | React ve Vite ile geliştirildi. Fotoğraf yükleme, işlem durumunu takip etme ve envanteri görüntüleme/düzeltme/silme işlemlerini içeriyor. |
+| **Vision-LLM ile ürün tanıma** | Gemini 2.5 Flash, fotoğraftaki ürünlerin adını, kategorisini, alt kategorisini, ambalaj durumunu, miktarını ve confidence score değerlerini çıkarıyor. |
+| **Rule-based freshness estimation** | Modelden SKT/TETT üretmesini istemiyoruz. `estimated_freshness_date`, fotoğraf tarihi ile kategori ve ambalaj durumuna göre hazırladığımız raf ömrü kurallarından hesaplanıyor. |
+| **Inventory CRUD** | Bulunan ürünler envantere eklenebiliyor (`Create`), listelenebiliyor (`Read`), düzeltilebiliyor veya tüketildi/atıldı olarak işaretlenebiliyor (`Update`) ve silinebiliyor (`Delete`). |
+| **Field-level confidence score** | Ürün adı ve kategori için güven değerlerini ayrı tutuyoruz. Güven değeri %70'in altına düşen kayıtları `needs_review` olarak işaretliyoruz. |
+| **Serverless AWS altyapısı** | API Gateway, Lambda, S3 ve DynamoDB ile sürekli açık bir sunucu yönetmeden çalışan, PoC ölçeğinde maliyeti kontrol edilebilir bir yapı kurduk. |
+
+## Faz 2 ve sonrasında neler eklenebilir?
+
+Aşağıdaki özellikler mevcut akışın parçası değil; Faz 1 sonuçlarına göre
+değerlendirmeyi düşündüğümüz geliştirmelerdir:
+
+| Planlanan geliştirme | Projedeki karşılığı ne olacak? |
+|---|---|
+| **Android/Kotlin mobil uygulama** | Web demo arayüzündeki fotoğraf yükleme ve envanter işlemlerinin mobil istemciye taşınması. |
+| **Authentication & authorization** | Sabit `u_demo` kullanıcısı yerine Amazon Cognito/JWT ile gerçek kullanıcı girişi ve her kullanıcının yalnızca kendi envanterine erişmesi. |
+| **OCR desteği** | Ambalaj üzerinde açıkça görülen SKT/TETT bilgisinin OCR ile okunması ve sistemin ürettiği tahmini tarihten ayrı tutulması. |
+| **Push notifications** | Tazeliğini kaybetmek üzere olan ürünler için kullanıcıya mobil veya web bildirimi gönderilmesi. |
+| **Human-in-the-loop review** | Confidence score düşük olduğunda sonucun otomatik kabul edilmesi yerine kullanıcıya veya operatöre gösterilip onaylanması/düzeltilmesi. Bu düzeltmeler daha sonra model performansını ölçmek için de kullanılabilir. |
+| **Workflow orchestration ve analytics** | İşlem adımları çoğalırsa retry ve hata yönetimi için AWS Step Functions; geçmiş envanter hareketlerini analiz etmek için DynamoDB Streams ve bir data lake akışı kullanılması. |
 
 Faz 1'de kimlik doğrulama bulunmaz ve sabit bir demo kullanıcı modeli
 kullanılır. Bu nedenle mevcut yapı gerçek son kullanıcı trafiğinden önce
