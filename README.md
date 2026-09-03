@@ -66,6 +66,14 @@ ve Faz 1 kapsam sınırını birlikte gösterir.*
 8. Web arayüzü işlem durumunu kısa aralıklarla sorgular ve tamamlandığında
    güncel envanteri gösterir.
 
+### AWS servisleri üzerinden işlem akışı
+
+![Akıllı buzdolabı AWS servisleri üzerinden uçtan uca işlem akışı](docs/images/aws-servis-akisi.png)
+
+*Bu görünüm; web arayüzünden başlayan yükleme ve envanter sorgularının API
+Gateway, Lambda, S3, Gemini, tazelik kuralları ve DynamoDB arasında nasıl
+ilerlediğini; log ve başarısız işlem yollarıyla birlikte gösterir.*
+
 ### Servis ilişkilerinin sade görünümü
 
 ![Akıllı buzdolabı servisleri arasındaki veri ve çağrı akışı](docs/images/faz1-akis-diyagrami.png)
