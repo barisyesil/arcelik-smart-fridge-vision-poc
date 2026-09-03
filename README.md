@@ -1,162 +1,283 @@
-# Akıllı Buzdolabı — Görüntü Tabanlı Envanter (PoC)
+# Arçelik IoT Akıllı Buzdolabı — Görsel Tabanlı Envanter PoC
 
-Kullanıcı bir gıda fotoğrafı yükler. Sistem görseli bir görüntü anlayan modele
-(Vision-LLM) gönderip **ürün adı + kategori** çıkarır, kategoriye göre **tahmini
-tazelik tarihi** hesaplar ve sonucu envantere yazar. Tümü AWS ücretsiz katmanı
-hedeflenerek, sunucusuz (serverless) bir mimariyle çalışır.
+Bu proje, buzdolabına eklenen gıdaların tek bir fotoğraf üzerinden tanınmasını,
+envantere kaydedilmesini ve kategori bazlı **tahmini tazelik tarihinin**
+hesaplanmasını sağlayan Faz 1 (MVP/PoC) çözümüdür.
 
-Bu bir kavram kanıtı (PoC) çalışmasıdır; üç varsayımı ölçer:
+Amaç yalnızca çalışan bir demo üretmek değil; aşağıdaki üç ürün varsayımını
+ölçülebilir bir mimariyle doğrulamaktır:
 
-1. Model, özel eğitim olmadan gıdaları yeterli doğrulukta tanıyabiliyor mu?
-2. Kategori bazlı tazelik tahmini anlamlı sonuç veriyor mu?
-3. Bu akış AWS ücretsiz katmanında kabul edilebilir gecikmeyle çalışıyor mu?
+1. Hazır bir görsel dil modeli, özel eğitim olmadan gıda ürünlerini yeterli
+   doğrulukta tanıyabilir mi?
+2. Kategori, alt kategori ve ambalaj durumuna dayalı tazelik tahmini kullanıcı
+   için anlamlı bir sinyal oluşturabilir mi?
+3. Akış, AWS üzerinde kontrollü maliyet ve kabul edilebilir gecikmeyle
+   işletilebilir mi?
 
----
+> **Önemli:** Sistemin ürettiği `estimated_freshness_date`, üretici tarafından
+> verilen son tüketim tarihi veya tavsiye edilen tüketim tarihi değildir. Bu
+> değer, fotoğraf tarihi ve raf ömrü kurallarından türetilen muhafazakâr bir
+> tahmindir.
 
-## Mimari
+## Projeyi nasıl tasarladık?
 
-Sistem tek yönlü, olay güdümlü (event-driven) bir akıştır: tarayıcı dosyayı
-doğrudan S3'e yükler, S3 olayı asenkron çıkarım Lambda'sını tetikler, sonuç
-DynamoDB'ye yazılır ve arayüz durumu sorgulayarak sonucu gösterir.
+Projeyi tasarlarken kullanıcı tarafındaki işlemi mümkün olduğunca basit tutmak
+istedik. Kullanıcı yalnızca web arayüzünden bir fotoğraf seçiyor; geri kalan
+işlemler arka planda ilerliyor. Fotoğrafı önce bir sunucuya gönderip oradan
+tekrar taşımak yerine, kısa süreli ve sınırlandırılmış bir yükleme izniyle
+doğrudan Amazon S3'e aktarıyoruz.
 
-![Faz 1 akış diyagramı](docs/images/faz1-akis-diyagrami.png)
+Fotoğraf S3'e ulaştığında analiz süreci otomatik olarak başlıyor. Gemini 2.5
+Flash fotoğraftaki ürünleri tanımlıyor, ancak tazelik tarihini modele
+hesaplatmıyoruz. Bunun yerine modelden aldığımız kategori ve ambalaj bilgilerini
+kendi raf ömrü kurallarımızla birleştiriyoruz. Sonuçları da DynamoDB üzerinde
+envanter kaydı hâline getiriyoruz.
 
-Ayrıntılı servis-servis boru hattı (istek numaralarıyla):
+Bu yapıyı oluştururken özellikle şu noktalara dikkat ettik:
 
-![Mimari boru hattı](docs/images/mimari-pipeline.png)
+- Kullanıcının mümkün olduğunca az manuel bilgi girmesi
+- Görsel analizi sürerken arayüzün beklememesi
+- Modelden gelen bilgilerin kontrol edilmeden envantere yazılmaması
+- İleride farklı bir görsel analiz servisine geçilebilmesi
+- Görsellerin ve API anahtarının güvenli şekilde saklanması
+- AWS kaynaklarının gerektiğinde aynı şekilde yeniden kurulabilmesi
 
-Özet akış:
+## Uçtan uca mimari
 
-```
-Tarayıcı ──POST /v1/uploads──► API Gateway ──► fridge-api ──► presigned POST + upload_id
-    │                                                              │
-    └──dosyayı doğrudan S3'e──► s3://fridge-raw-*/uploads/  ◄───────┘
-                                          │
-                            ObjectCreated (prefix: uploads/)
-                                          ▼
-                                   fridge-extractor
-                                     │          │
-                              Gemini 2.5     DynamoDB (Observation + InventoryItem)
-                                          ▲
-    Tarayıcı ──GET /v1/uploads/{id}───────┘   (~2 sn'de bir sorar)
-```
+![Arçelik IoT akıllı buzdolabı Faz 1 ayrıntılı AWS işlem hattı](docs/images/mimari-pipeline.jpg)
 
-### Neden bu tasarım
+*Ayrıntılı görünüm; istemci, AWS servisleri, Gemini entegrasyonu, hata yönetimi
+ve Faz 1 kapsam sınırını birlikte gösterir.*
 
-| Karar | Gerekçe |
+### Akış nasıl çalışır?
+
+1. Web arayüzü seçilen fotoğrafı tarayıcıda en fazla 1024 piksele küçültür ve
+   JPEG kalitesini optimize eder.
+2. İstemci `POST /v1/uploads` ile kısa süreli bir presigned POST yükleme izni ve
+   `upload_id` alır.
+3. Görsel, API Gateway veya Lambda üzerinden taşınmadan doğrudan
+   `uploads/` önekli S3 alanına yüklenir.
+4. `ObjectCreated` olayı `fridge-extractor` Lambda fonksiyonunu tetikler.
+5. Görsel Gemini 2.5 Flash'a gönderilir; ürün adı, kategori, adet, ambalaj
+   durumu ve alan bazlı güven skorları alınır.
+6. Tazelik motoru, fotoğraf tarihi ile kategori/alt kategori raf ömrü
+   kurallarını birleştirir.
+7. Gözlem, ürünler ve işlem durumu DynamoDB'ye atomik olarak yazılır.
+8. Web arayüzü işlem durumunu kısa aralıklarla sorgular ve tamamlandığında
+   güncel envanteri gösterir.
+
+### Servis ilişkilerinin sade görünümü
+
+![Akıllı buzdolabı servisleri arasındaki veri ve çağrı akışı](docs/images/faz1-akis-diyagrami.png)
+
+*Sade görünüm; yükleme izni, doğrudan S3 aktarımı, görsel analiz, envanter
+yazımı ve başarısız asenkron çağrıların DLQ'ya yönlendirilmesini özetler.*
+
+## Faz 1 kapsamı
+
+| Kapsamda | Sonraki fazlarda |
 |---|---|
-| Görsel **doğrudan** S3'e (API Gateway'den geçmez) | 5 MB'lık dosya Lambda payload limitini aşar; presigned POST boyut ve içerik tipini de sınırlar. |
-| Çıkarım **asenkron** (S3 → Lambda) | LLM çağrısı saniyeler sürebilir; senkron API isteği zaman aşımına uğrardı. |
-| Tarih **modelden değil, kuraldan** | Model tarih üretmez; tazelik `fotoğraf_tarihi + raf_ömrü(kategori)` ile hesaplanır. Sonuç bir tahmindir, SKT/TETT değildir. |
-| DynamoDB **tek tablo + GSI1** | Tüm erişim `query`/`get_item` ile yapılır, `scan` yoktur; ücretsiz katmanda öngörülebilir maliyet. |
-| SQS **sadece DLQ** | Kuyruk akışın içinde değil, kenarında; başarısız çıkarımlar için `onFailure` hedefi. |
+| Web tabanlı test arayüzü | Mobil uygulama |
+| Fotoğraftan ürün tanıma | Son kullanıcılı kimlik doğrulama |
+| Kategori bazlı tazelik tahmini | Etiket/SKT OCR |
+| Temel envanter listeleme, düzeltme ve silme | Push bildirimleri |
+| Alan bazlı güven skoru | İnsan onay kuyruğu |
+| Düşük maliyet odaklı AWS altyapısı | Step Functions ve veri gölü akışları |
 
-### Kurulan AWS kaynakları
+Faz 1'de kimlik doğrulama bulunmaz ve sabit bir demo kullanıcı modeli
+kullanılır. Bu nedenle mevcut yapı gerçek son kullanıcı trafiğinden önce
+kimlik doğrulama ve kurumsal veri gizliliği kontrolleriyle genişletilmelidir.
 
-| Kaynak | Ad | Kritik ayarlar |
+## Mevcut durum
+
+Aşağıdaki durum, repodaki kod ve otomatik testler esas alınarak hazırlanmıştır;
+canlı AWS ortamının dağıtılmış olduğu anlamına gelmez.
+
+| Alan | Durum | Açıklama |
 |---|---|---|
-| S3 Bucket | `fridge-raw-{hesap}` | Public access kapalı, SSE-S3, CORS, 30 gün lifecycle, `ObjectCreated:*` → Lambda (prefix `uploads/`) |
-| HTTP API | `fridge-api-gw` | Auth yok, throttling 5 rps / burst 10, CORS kısıtlı |
-| Lambda | `fridge-api` | 256 MB, 10 sn, arm64 |
-| Lambda | `fridge-extractor` | 512 MB, 60 sn, arm64, reserved concurrency 5, onFailure → DLQ |
-| DynamoDB | `fridge-main` | Provisioned 5/5, GSI1 5/5, TTL `expires_at`, Streams açık |
-| SSM Parameter | `/smartfridge/dev/gemini-api-key` | SecureString (elle oluşturulur) |
-| SQS | `fridge-extractor-dlq` | 14 gün saklama |
-| Log Groups | ×3 | retention 7 gün |
-| IAM Roles | ×2 | Kaynak bazlı, wildcard yok |
-| Budget | 5 USD | E-posta alarmı |
+| Çekirdek iş mantığı | Hazır | Taksonomi, çıkarım sözleşmesi, raf ömrü ve tazelik motoru uygulanmış durumda |
+| Backend ve veri erişimi | Hazır | Presigned yükleme, çıkarım, durum sorgulama ve envanter CRUD akışları mevcut |
+| AWS altyapısı | Kodlandı | S3, Lambda, HTTP API, DynamoDB, SSM, DLQ, log grupları ve bütçe CDK ile tanımlı |
+| Web arayüzü | Hazır | Fotoğraf yükleme, durum takibi, envanter görüntüleme/düzeltme/silme akışları mevcut |
+| Otomatik doğrulama | Geçiyor | 94 birim ve 24 moto tabanlı entegrasyon testi |
+| PoC başarı ölçümü | Bekliyor | 50 etiketli görselle doğruluk, gecikme ve maliyet ölçümü tamamlanmalı |
 
-Altyapının nasıl kurulduğu ve deploy adımları: [`infra/README.md`](infra/README.md).
+## Teknik bileşenler
 
----
+| Katman | Teknoloji | Rolü |
+|---|---|---|
+| İstemci | React, Vite, TypeScript | Görsel seçimi, tarayıcıda küçültme, yükleme ve envanter yönetimi |
+| API | Amazon API Gateway HTTP API | Yükleme izni, durum ve envanter uçları |
+| Uygulama | AWS Lambda, Python 3.12, ARM64 | API işlemleri ve asenkron görsel çıkarımı |
+| Ham veri | Amazon S3 | Görselleri özel erişimle, 30 günlük yaşam döngüsüyle saklama |
+| Yapay zekâ | Gemini 2.5 Flash | Fotoğraftan yapılandırılmış ürün bilgisi çıkarma |
+| İş kuralları | Saf Python çekirdeği | Taksonomi doğrulama ve tahmini tazelik hesabı |
+| Veri | Amazon DynamoDB | Gözlem, ürün, yükleme durumu ve idempotency kayıtları |
+| API anahtarının saklanması | AWS Systems Manager Parameter Store | Gemini anahtarını kodun dışında ve şifreli biçimde saklama |
+| Hata yönetimi | Amazon SQS DLQ | Başarısız asenkron çıkarımları 14 gün saklama |
+| Gözlemlenebilirlik | Amazon CloudWatch Logs | Lambda loglarını yedi günlük saklama politikasıyla tutma |
+| Altyapı | AWS CDK, Python | Kaynakları kodla ve tekrar üretilebilir biçimde tanımlama |
 
-## Proje yapısı
+AWS bölgesi `eu-central-1` (Frankfurt) olarak sabitlenmiştir.
 
+## Bu yapıyı neden tercih ettik?
+
+- **Fotoğrafı doğrudan S3'e yükledik.** Görseli API Gateway ve Lambda üzerinden
+  geçirmek hem gereksiz veri trafiği oluşturacak hem de dosya boyutu sınırlarını
+  yönetmeyi zorlaştıracaktı. Bu yüzden dosya türünü ve boyutunu sınırlayan
+  presigned POST yöntemini kullandık.
+- **Görsel analizini arka planda çalıştırdık.** Modelin yanıt süresi her zaman
+  aynı olmayabileceği için kullanıcıyı açık bir HTTP isteğinde bekletmek
+  istemedik. Fotoğraf yüklendikten sonra işlem devam ediyor, arayüz ise belirli
+  aralıklarla sonucu kontrol ediyor.
+- **Modelin ürettiği her bilgiyi doğrudan kabul etmedik.** Kategori ve alt
+  kategori seçeneklerini önceden belirledik. Model bu listelerden seçim yapıyor,
+  gelen sonuç uygulama tarafında bir kez daha kontrol ediliyor.
+- **Tazelik tarihini yapay zekâya bırakmadık.** Model yalnızca fotoğrafta ne
+  gördüğünü söylüyor. Tahmini tarih, bizim hazırladığımız raf ömrü tablosu ve
+  Python kodu üzerinden hesaplanıyor. Böylece sonuçların nasıl oluştuğunu
+  açıklayabiliyor ve aynı girdide aynı hesabı yapabiliyoruz.
+- **Güven skorunu tek değer olarak tutmadık.** Ürün adı doğru görünürken
+  kategori düşük güvenli olabilir. Bu nedenle iki alanın güvenini ayrı saklıyor,
+  düşük güvenli sonuçları arayüzde gözden geçirilecek şekilde işaretliyoruz.
+- **Aynı fotoğrafın iki kez işlenmesini önledik.** S3 bazı olayları birden fazla
+  kez iletebildiği için her görsel için benzersiz bir işlem anahtarı oluşturduk.
+  Böylece aynı ürünlerin envantere tekrar tekrar eklenmesini engelliyoruz.
+- **Kayıtların yarım kalmamasını hedefledik.** Gözlem, bulunan ürünler ve yükleme
+  durumu DynamoDB'ye birlikte yazılıyor. İşlemin bir bölümü başarısız olduğunda
+  eksik bir envanter kaydı oluşmuyor.
+- **Gemini'ye doğrudan bağımlı kalmadık.** Görsel analiz bölümünü
+  `VisionProvider` adını verdiğimiz bir katmanın arkasına aldık. İleride başka
+  bir bulut servisi veya cihaz üzerinde çalışan bir model denenirse ana iş
+  kurallarını baştan yazmamız gerekmeyecek.
+
+## Güvenlik ve maliyet tarafında nelere dikkat ettik?
+
+- S3 alanını dışarıya kapattık ve ham görselleri şifreli saklayacak şekilde
+  yapılandırdık.
+- Gemini API anahtarını kodun ya da Lambda ayarlarının içine yazmadık. Anahtarı
+  SSM Parameter Store üzerinde şifreli saklayıp yalnızca ihtiyaç anında okuyoruz.
+- Görsel içeriğini, modelin tam yanıtını ve API anahtarını loglara yazmıyoruz.
+- Her Lambda fonksiyonuna yalnızca ihtiyaç duyduğu AWS kaynakları için izin
+  veriyoruz.
+- Faz 1 için gerekmeyen VPC ve NAT Gateway kullanımından kaçındık; böylece
+  gereksiz sabit maliyet oluşturmuyoruz.
+- Aynı anda çalışabilecek analiz sayısını sınırladık. Başarısız işlemleri daha
+  sonra inceleyebilmek için ayrı bir hata kuyruğuna gönderiyoruz.
+- Beklenmeyen harcamaları erken fark edebilmek için aylık 5 USD bütçeye bağlı
+  %80 ve %100 uyarıları tanımladık.
+- Görseller Gemini servisine gönderildiği için Faz 1 çalışmalarını yalnızca
+  ekip tarafından hazırlanan test verileriyle yürütüyoruz. Gerçek kullanıcı
+  verisinden önce ayrıca veri gizliliği değerlendirmesi yapılması gerekiyor.
+
+> Ücretsiz katman kullanımı garanti değildir; gerçek maliyet AWS hesabının
+> koşullarına, trafik miktarına ve harici model kotasına bağlıdır.
+
+## API özeti
+
+| Metot | Yol | Amaç |
+|---|---|---|
+| `POST` | `/v1/uploads` | Presigned POST ve `upload_id` üretir |
+| `GET` | `/v1/uploads/{upload_id}` | İşlem durumunu ve oluşan ürünleri döndürür |
+| `GET` | `/v1/items` | Aktif envanteri tazelik sırasıyla listeler |
+| `PATCH` | `/v1/items/{item_id}` | Ürün bilgisini veya durumunu düzeltir |
+| `DELETE` | `/v1/items/{item_id}` | Envanter kaydını siler |
+
+Durum değerleri: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`.
+
+## Repo yapısı
+
+```text
+src/
+  core/          AWS bağımsız iş kuralları, taksonomi ve tazelik motoru
+  adapters/      Gemini ve DynamoDB adaptörleri
+  handlers/      Lambda giriş noktaları ve HTTP yönlendirme
+infra/           AWS CDK stack'i ve Lambda paketleme betiği
+web/             React/Vite test arayüzü
+tests/
+  unit/          AWS erişimi gerektirmeyen birim testleri
+  integration/   moto ile sahte AWS servisleri kullanan entegrasyon testleri
+fixtures/        Etiketli doğrulama veri setinin tanımı
+docs/            Mimari görseller ve raf ömrü kaynak verileri
 ```
-.
-├── src/
-│   ├── core/          # Saf iş mantığı — AWS importu yok, AWS olmadan test edilir
-│   ├── adapters/      # VisionProvider (Gemini) + InventoryRepository (DynamoDB)
-│   └── handlers/      # Lambda giriş noktaları — ince; event parse et, core'u çağır
-├── infra/             # AWS CDK stack'i (Python) + Lambda paketleme scripti
-├── web/               # React + Vite + TypeScript test arayüzü
-├── tests/
-│   ├── unit/          # core/ testleri, AWS gerektirmez
-│   └── integration/   # moto ile sahte AWS testleri
-├── fixtures/          # Etiketli test görselleri (görseller versiyonlanmaz)
-└── docs/              # Görseller ve kaynak veriler
+
+## Yerel kurulum ve doğrulama
+
+Gereksinimler:
+
+- Python 3.12+
+- Node.js 20+
+- AWS CLI ve AWS CDK CLI (altyapı işlemleri için)
+
+### Python ortamı
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt -r requirements.txt
 ```
 
-Katman kuralı tek yönlüdür: `handlers` ve `adapters`, `core`'a bağımlıdır; `core`
-hiçbir şeye bağımlı değildir ve içinde AWS importu bulunamaz. Bu kural
-`tests/unit/test_core_purity.py` tarafından otomatik zorlanır.
+Kalite kontrolleri:
 
----
-
-## Kurulum
-
-Gerekenler: Python 3.12+, Node 20+ (CDK ve web arayüzü için), AWS kimlik profili.
-
-### Backend (iş mantığı + testler)
-
-```bash
-python -m venv .venv && source .venv/Scripts/activate
-pip install -r requirements-dev.txt -r requirements.txt
+```powershell
+ruff check .
+ruff format --check .
+pytest tests/unit
+pytest tests/integration -m integration
 ```
 
-Lint ve testler:
-
-```bash
-ruff check . && ruff format --check .
-pytest tests/unit                          # AWS gerektirmez, saniyeler sürer
-pytest tests/integration -m integration    # moto ile sahte AWS
-```
+Bu testler gerçek AWS kaynaklarına bağlanmaz; entegrasyon testleri AWS
+servislerini `moto` ile yerelde taklit eder.
 
 ### Web arayüzü
 
-```bash
-cd web && npm install && npm run dev   # http://localhost:5173
+```powershell
+Set-Location web
+npm install
+npm run dev
 ```
 
-Ayrıntı: [`web/README.md`](web/README.md).
+Arayüz varsayılan olarak `http://localhost:5173` adresinde açılır. API adresi
+arayüzdeki bağlantı panelinden veya `web/.env.local` içindeki `VITE_API_URL`
+değeriyle verilebilir.
 
-### Altyapı (deploy)
+### AWS altyapısı
 
-```bash
-pip install -r infra/requirements.txt
-python infra/scripts/build_lambda_packages.py
-cd infra && cdk synth -c budget_alert_email=ekip@ornek.com
-```
+Önce Gemini anahtarını repoya yazmadan SSM'e ekleyin:
 
-Tam deploy akışı ve konsol adımları: [`infra/README.md`](infra/README.md).
-
----
-
-## Sırlar
-
-Gemini API anahtarı repoda, `.env`'de veya Lambda ortam değişkeninde **durmaz**.
-SSM Parameter Store SecureString'te durur ve elle oluşturulur:
-
-```bash
+```powershell
 aws ssm put-parameter --name /smartfridge/dev/gemini-api-key --type SecureString --value "ANAHTAR" --region eu-central-1
 ```
 
-Lambda ortam değişkeni anahtarın **kendisini** değil, **parametre adını** taşır.
+Ardından Lambda paketlerini hazırlayıp CDK çıktısını doğrulayın:
 
----
+```powershell
+python infra/scripts/build_lambda_packages.py
+Set-Location infra
+python -m pip install -r requirements.txt
+cdk synth -c budget_alert_email=ekip@ornek.com
+```
 
-## Dal stratejisi ve CI/CD
+Canlı kaynak oluşturacak `cdk deploy` adımı öncesinde AWS hesabı, bölge,
+bütçe e-posta adresi ve kurumsal onayların doğrulanması gerekir.
 
-Depo Gitflow'a göre işletilir:
+## Başarı kriterleri ve sonraki adımlar
 
-| Dal | Amaç |
-|---|---|
-| `main` | Kararlı, yayınlanabilir sürüm. Doğrudan push yapılmaz. |
-| `develop` | Entegrasyon dalı; özellikler burada birleşir. |
-| `feature/*` | Tek bir iş; `develop`'tan açılır, `develop`'a PR ile döner. |
-| `release/*` | Yayın hazırlığı; `develop`'tan açılır, `main` ve `develop`'a birleşir. |
-| `hotfix/*` | Acil düzeltme; `main`'den açılır, `main` ve `develop`'a birleşir. |
+Faz 1'in tamamlanması için 50 etiketli test görseli üzerinde en az sekiz gıda
+kategorisini kapsayan ölçüm seti hazırlanmalıdır. Ölçüm raporu şu dört sonucu
+birlikte sunmalıdır:
 
-Her push ve `main`/`develop`'a açılan her PR, GitHub Actions'ta CI çalıştırır:
-lint (ruff), birim testleri, entegrasyon testleri (moto) ve CDK synth. Ayrıntı
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) dosyasında.
+1. Ürün adı tanıma doğruluğu
+2. Kategori doğruluğu
+3. Uçtan uca işlem gecikmesi
+4. Görsel başına ve aylık tahmini maliyet
+
+Bu ölçüm tamamlanmadan çözüm “üretime hazır” olarak değerlendirilmemelidir.
+
+## Ayrıntılı dokümantasyon
+
+- [AWS altyapısı ve deploy adımları](infra/README.md)
+- [Web arayüzü rehberi](web/README.md)
+- [Doğrulama görselleri ve etiket formatı](fixtures/README.md)

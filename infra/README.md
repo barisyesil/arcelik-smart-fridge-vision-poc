@@ -4,7 +4,7 @@ Tüm altyapı Python ile yazılmış tek bir AWS CDK stack'idir
 ([`stacks/fridge_stack.py`](stacks/fridge_stack.py)). `cdk deploy` ile kurulur,
 `cdk destroy` ile tamamen silinir. Bölge sabittir: **eu-central-1 (Frankfurt)**.
 
-![Mimari boru hattı](../docs/images/mimari-pipeline.png)
+![Mimari boru hattı](../docs/images/mimari-pipeline.jpg)
 
 ## Stack ne kuruyor
 
