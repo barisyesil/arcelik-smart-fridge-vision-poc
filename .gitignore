@@ -1,0 +1,40 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / Vite ---
+node_modules/
+dist/
+.vite/
+*.local
+
+# --- AWS CDK ---
+cdk.out/
+cdk.context.json
+.cdk.staging/
+
+# --- Sırlar (SSM Parameter Store'ta durur, repoda değil) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+aws-credentials*
+
+# --- Test görselleri: sadece etiket dosyaları versiyonlanır ---
+fixtures/images/*
+!fixtures/images/.gitkeep
+
+# --- IDE / OS ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+# Yerel gelistirme + CI.
+#
+# google-genai burada de var cunku handlers/adapters MODUL SEVIYESINDE
+# `from google import genai` yapiyor (GeminiProvider) — bu satir olmadan
+# `pytest tests/unit` bile import hatasi verir, Gemini'ye hic cikilmasa da.
+# Gercek surumu requirements.txt'teki (Lambda calisma zamani) ile ayni tutun.
+pytest==8.3.4
+moto[dynamodb,s3,ssm]==5.0.28
+boto3==1.36.3
+google-genai==2.21.0
+ruff==0.9.2

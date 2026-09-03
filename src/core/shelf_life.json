@@ -1,0 +1,195 @@
+{
+  "schema_version": "2.0",
+  "_comment": "Buzdolabi/dondurucu kosullari icin gun cinsinden raf omru. Bu bir tahmin tablosudur, mevzuat degeri degildir. Cozumleme sirasi: alt kategori -> kategori 'default' -> global_default. package_state=unknown geldiginde opened_days (kisa olani) secilir.",
+  "_provenance": "Bu dosya docs/kaynaklar/shelf-life-rules.v1.json'dan turetilmistir (USDA FoodKeeper 2025, FoodSafety.gov, FDA - o dosyanin 'sources' alanina bakin). O tablo cogu kalem icin 'basis: package_date_required' kullanir: kapali urunde ambalaj tarihi esastir, tablonun sayisi SADECE ACILDIKTAN SONRAsi icindir. K-02 geregi ambalaj tarihini asla okumuyoruz, bu yuzden KAPALI durum icin kendi muhafazakar tahminimizi (source='lit.') koruduk, ACIK durum icin kaynak tablonun recommended_days degerini aldik. Bu yuzden unopened_source ve opened_source AYRI alanlardir - ayni satirin iki ucu farkli kaynaktan gelebiliyor. rule_id, ilgili SL-* kuralina isaret eder (izlenebilirlik).",
+  "_null_policy": "Kaynak tablo bazi kalemler icin (Diger, Urun Yok) bilincli olarak sayi vermiyor: 'siniflandirilmadan tarih uretilmez, kullaniciya sorulur'. Biz bunu uygulamiyoruz - motorumuzun degismez kurali her urun icin MUTLAKA bir tarih uretmek (kullanici sonradan duzeltir, F-05). Boyle kalemlerde kendi muhafazakar varsayilanimizi kullaniyoruz.",
+  "global_default": {
+    "unopened_days": 5, "unopened_source": "lit.",
+    "opened_days": 3, "opened_source": "lit."
+  },
+  "categories": {
+    "dairy": {
+      "default": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit." },
+      "subcategories": {
+        "milk_uht": { "unopened_days": 90, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "UHT kaynak tabloda yok; 'Sut' kurali taze/pastorize sute karsilik geliyor." },
+        "milk_fresh": { "unopened_days": 7, "unopened_source": "lit.", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-MILK" },
+        "yogurt": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-YOGURT" },
+        "cheese_hard": { "unopened_days": 60, "unopened_source": "lit.", "opened_days": 21, "opened_source": "lit.", "note": "Kaynak tek 'Peynir' kalemi veriyor ve sert peynir icin ayri kategori onerir; biz zaten ayirmistik." },
+        "cheese_soft": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 14, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-CHEESE" },
+        "ayran": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-AYRAN" },
+        "kefir": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-KEFIR" },
+        "butter": { "unopened_days": 60, "unopened_source": "lit.", "opened_days": 45, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DAIRY-BUTTER" },
+        "cream": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025+FDA_STORAGE_CHART", "rule_id": "SL-DAIRY-CREAM" },
+        "other_dairy": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynakta basis=not_applicable (alt tur bilinmeden hesaplanmaz); biz yine de tahmin uretiyoruz." }
+      }
+    },
+    "meat_poultry": {
+      "default": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-MEAT-OTHER" },
+      "subcategories": {
+        "ground_meat": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-GROUND" },
+        "cubed_meat": { "unopened_days": 2, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 2, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-CUBED" },
+        "steak_chop": { "unopened_days": 3, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-STEAK", "note": "SL-MEAT-STEAK ve SL-MEAT-CHOP birlestirildi, degerleri ayni." },
+        "chicken": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-CHICKEN" },
+        "turkey": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-TURKEY" },
+        "offal": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-OFFAL" },
+        "cooked_meat": { "unopened_days": 3, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-MEAT-COOKED" },
+        "other_meat": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-MEAT-OTHER", "note": "Tur bilinmedigi icin en riskli cig et kurali." }
+      }
+    },
+    "deli": {
+      "default": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-DELI-OTHER" },
+      "subcategories": {
+        "sucuk": { "unopened_days": 30, "unopened_source": "lit.", "opened_days": 14, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DELI-SUCUK" },
+        "salami": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-DELI-SALAMI" },
+        "sausage": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 7, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-DELI-SAUSAGE" },
+        "pastirma": { "unopened_days": 30, "unopened_source": "lit.", "opened_days": 14, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DELI-PASTRAMI" },
+        "ham": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-DELI-HAM" },
+        "kavurma": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-DELI-KAVURMA" },
+        "pate": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "other_deli": { "unopened_days": 14, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-DELI-OTHER" }
+      }
+    },
+    "fish_seafood": {
+      "default": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-SEAFOOD-OTHER" },
+      "subcategories": {
+        "fish": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-SEAFOOD-FISH" },
+        "shrimp": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-SEAFOOD-SHRIMP" },
+        "mussel": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-SEAFOOD-MUSSEL" },
+        "squid": { "unopened_days": 1, "unopened_source": "FDA_STORAGE_CHART", "opened_days": 1, "opened_source": "FDA_STORAGE_CHART", "rule_id": "SL-SEAFOOD-SQUID" },
+        "canned_fish": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-SEAFOOD-CANNED-FISH" },
+        "other_seafood": { "unopened_days": 1, "unopened_source": "USDA_COLD_STORAGE", "opened_days": 1, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-SEAFOOD-OTHER" }
+      }
+    },
+    "egg": {
+      "default": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 14, "opened_source": "lit." },
+      "subcategories": {
+        "shell_egg": { "unopened_days": 28, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 28, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-EGG-CHICKEN", "note": "Kabuklu yumurtada acik/kapali ayrimi yok; karton icinde kartondaki tarih onceliklidir." },
+        "quail_egg": { "unopened_days": 21, "unopened_source": "lit.", "opened_days": 21, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-EGG-QUAIL" },
+        "boiled_egg": { "unopened_days": 7, "unopened_source": "lit.", "opened_days": 5, "opened_source": "lit.", "note": "Kaynak tabloda yok." }
+      }
+    },
+    "produce_vegetable": {
+      "default": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-OTHER" },
+      "subcategories": {
+        "tomato": { "unopened_days": 7, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-TOMATO" },
+        "cucumber": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-CUCUMBER" },
+        "pepper": { "unopened_days": 7, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-PEPPER" },
+        "eggplant": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-EGGPLANT" },
+        "zucchini": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-ZUCCHINI" },
+        "leafy": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-LEAFY" },
+        "onion": { "unopened_days": 45, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 45, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-ONION", "note": "Butun kuru sogan; kesilmis sogan icin kaynak 7 gun onerir (bizde 'kesilmis' durumu ayri izlenmiyor)." },
+        "garlic": { "unopened_days": 45, "unopened_source": "lit.", "opened_days": 45, "opened_source": "lit.", "note": "Kaynak tabloda yok; sogana benzer varsayildi." },
+        "potato": { "unopened_days": 21, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 21, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-POTATO" },
+        "carrot": { "unopened_days": 21, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 21, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-CARROT" },
+        "mushroom": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-MUSHROOM" },
+        "brassica": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-BRASSICA" },
+        "bean_pea": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-BEAN-PEA" },
+        "fresh_herb": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "other_vegetable": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-VEG-OTHER" }
+      }
+    },
+    "produce_fruit": {
+      "default": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-OTHER" },
+      "subcategories": {
+        "apple": { "unopened_days": 35, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 35, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-APPLE", "note": "Eski birlesik apple_pear ayrildi: armut cok daha kisa omurlu." },
+        "pear": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-PEAR" },
+        "banana": { "unopened_days": 3, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-BANANA" },
+        "citrus": { "unopened_days": 21, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 21, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-CITRUS", "note": "Portakal/mandalina. Limon ayri (daha uzun omurlu)." },
+        "lemon": { "unopened_days": 28, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 28, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-LEMON" },
+        "strawberry": { "unopened_days": 2, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 2, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-STRAWBERRY" },
+        "berry": { "unopened_days": 4, "unopened_source": "lit.", "opened_days": 4, "opened_source": "lit.", "note": "Cilek disi yumusak meyveler (yaban mersini, ahududu); kaynak tabloda yok." },
+        "grape": { "unopened_days": 10, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 10, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-GRAPE" },
+        "melon": { "unopened_days": 7, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-MELON", "note": "Butun urun; kesilmis icin kaynak 3-4 gun onerir." },
+        "stone_fruit": { "unopened_days": 4, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 4, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-STONE" },
+        "avocado": { "unopened_days": 3, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-AVOCADO" },
+        "other_fruit": { "unopened_days": 5, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FRUIT-OTHER" }
+      }
+    },
+    "bakery": {
+      "default": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit." },
+      "subcategories": {
+        "bread": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "pastry": { "unopened_days": 3, "unopened_source": "lit.", "opened_days": 2, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "cake": { "unopened_days": 4, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." }
+      }
+    },
+    "prepared_leftover": {
+      "default": { "unopened_days": 3, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit." },
+      "subcategories": {
+        "cooked_meat_dish": { "unopened_days": 3, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "cooked_vegetable_dish": { "unopened_days": 4, "unopened_source": "lit.", "opened_days": 4, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "soup": { "unopened_days": 3, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "rice_pasta": { "unopened_days": 4, "unopened_source": "lit.", "opened_days": 4, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "dressed_salad": { "unopened_days": 1, "unopened_source": "lit.", "opened_days": 1, "opened_source": "lit.", "note": "Kaynak tabloda yok." }
+      }
+    },
+    "beverage": {
+      "default": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit." },
+      "subcategories": {
+        "water": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-WATER" },
+        "fresh_juice": { "unopened_days": 3, "unopened_source": "lit.", "opened_days": 2, "opened_source": "lit.", "note": "Kaynagin 'Meyve Suyu' kurali ambalajli urunu varsayiyor; taze sikilmis icin kendi tahminimiz korundu." },
+        "packaged_juice": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-JUICE" },
+        "soda": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-SODA" },
+        "iced_tea": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-ICED-TEA" },
+        "energy_drink": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-ENERGY" },
+        "herbal_tea": { "unopened_days": 3, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 3, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-HERBAL-TEA", "note": "Demlenmis cay varsayimi; kuru cay icin gecerli degil." },
+        "alcohol": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 7, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-DRINK-ALCOHOL", "note": "Bira/sarap/likor sureleri cok farkli; orta konservatif deger secildi." },
+        "other_beverage": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynakta basis=package_date_required, sayi verilmemis." }
+      }
+    },
+    "condiment_sauce": {
+      "default": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-SAUCE-OTHER" },
+      "subcategories": {
+        "ketchup": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 120, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-KETCHUP" },
+        "mayo": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 60, "opened_source": "USDA_FOODKEEPER_2025+FDA_STORAGE_CHART", "rule_id": "SL-SAUCE-MAYO", "note": "Ticari mayonez; ev yapimi icin gecerli degil." },
+        "mustard": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 270, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-MUSTARD" },
+        "tomato_paste": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 5, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-PASTE" },
+        "vinegar": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 730, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-VINEGAR", "note": "Sogutma gerektirmez; tarih kalite icindir." },
+        "oil": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 180, "opened_source": "lit.", "note": "Kaynak tabloda yok (sadece sirke var)." },
+        "dressing": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 60, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-DRESSING", "note": "Ticari siselenmis urun; sut/yumurta iceren ev yapimi sos 3-4 gun." },
+        "spice": { "unopened_days": 1095, "unopened_source": "lit.", "opened_days": 730, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-SAUCE-SPICE", "note": "Kuru baharat; sogutma gerektirmez." },
+        "other_sauce": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-SAUCE-OTHER" }
+      }
+    },
+    "preserves_pickles": {
+      "default": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-PRESERVE-OTHER" },
+      "subcategories": {
+        "pickle": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 60, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-PRESERVE-PICKLE" },
+        "olive": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 60, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-PRESERVE-OLIVE" },
+        "canned_vegetable": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-PRESERVE-CANNED-VEG" },
+        "canned_fruit": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 5, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-PRESERVE-CANNED-FRUIT" },
+        "jam": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 180, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-PRESERVE-JAM", "note": "Ticari urun; ev yapimi/dusuk sekerli urun daha kisa surebilir." },
+        "honey": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 730, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-PRESERVE-HONEY", "note": "Sogutma gerektirmez; kristallesme bozulma degildir." },
+        "other_preserve": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 3, "opened_source": "USDA_COLD_STORAGE", "rule_id": "SL-PRESERVE-OTHER" }
+      }
+    },
+    "pantry_dry": {
+      "default": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 180, "opened_source": "lit." },
+      "subcategories": {
+        "flour_grain": { "unopened_days": 365, "unopened_source": "lit.", "opened_days": 180, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "dry_pasta_rice": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 365, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "dry_legume": { "unopened_days": 730, "unopened_source": "lit.", "opened_days": 365, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "nuts_seeds": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 90, "opened_source": "lit.", "note": "Kaynak tabloda yok." }
+      }
+    },
+    "frozen": {
+      "default": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 90, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FROZEN-OTHER" },
+      "subcategories": {
+        "frozen_vegetable": { "unopened_days": 300, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 300, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FROZEN-VEG" },
+        "frozen_meat": { "unopened_days": 180, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 180, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-FROZEN-MEAT" },
+        "frozen_potato": { "unopened_days": 270, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 270, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FROZEN-POTATO" },
+        "frozen_pastry": { "unopened_days": 90, "unopened_source": "USDA_FOODKEEPER_2025", "opened_days": 90, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FROZEN-PASTRY" },
+        "frozen_fish": { "unopened_days": 90, "unopened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "opened_days": 90, "opened_source": "USDA_COLD_STORAGE+FDA_STORAGE_CHART", "rule_id": "SL-FROZEN-FISH" },
+        "frozen_ready_meal": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 180, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "ice_cream": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 180, "opened_source": "lit.", "note": "Kaynak tabloda yok." },
+        "other_frozen": { "unopened_days": 180, "unopened_source": "lit.", "opened_days": 90, "opened_source": "USDA_FOODKEEPER_2025", "rule_id": "SL-FROZEN-OTHER" }
+      }
+    },
+    "other": {
+      "default": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit." },
+      "subcategories": {
+        "unknown_food": { "unopened_days": 5, "unopened_source": "lit.", "opened_days": 3, "opened_source": "lit.", "note": "Kaynakta karsiligi: basis=not_applicable, urun secilmeden tarih uretilmez. Biz yine de tahmin uretiyoruz, needs_review isaretlemesi devrede." }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+[project]
+name = "smartfridge"
+version = "0.1.0"
+description = "Akilli Buzdolabi Envanter Sistemi - Faz 1 PoC"
+requires-python = ">=3.12"
+
+# Bilincli tercih: paket olarak kurulmuyoruz. pytest `pythonpath` ile src/'i
+# gorur, Lambda paketleme adiminda ise src/ zaten kok dizin olarak zipleniyor.
+# Boylece Faz 1'de build/packaging katmani yok.
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: AWS veya ag erisimi gerektirir (varsayilan CI'da calismaz)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplify
+    "TID",      # tidy-imports
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+quote-style = "double"

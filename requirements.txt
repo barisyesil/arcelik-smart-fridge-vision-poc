@@ -1,0 +1,7 @@
+# Lambda calisma zamani bagimliliklari. Bunlar deploy paketine girer.
+#
+# boto3/botocore BILEREK YOK: Lambda calisma zamani zaten sagliyor. Pakete
+# eklemek ~15 MB olu agirlik ve calisma zamanindakiyle surum catismasi demek.
+# Yerel testte gereken boto3/moto requirements-dev.txt icinde.
+
+google-genai==2.21.0

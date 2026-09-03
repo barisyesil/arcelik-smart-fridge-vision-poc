@@ -1,0 +1,9 @@
+# Depoda her sey LF. Windows'ta checkout sirasinda CRLF'e cevrilir.
+# Bu satir olmadan iki kisi farkli isletim sisteminde calisirken diff'ler
+# tamamen satir sonu degisikligiyle dolar.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
