@@ -122,6 +122,37 @@ class TestCommitExtraction:
         (item,) = repo.get_items("u_demo", [items[0].item_id])
         assert item.needs_review is True
 
+    def test_bounding_box_round_trips_through_dynamodb(self, repo):
+        """Kutu, item ile birlikte DynamoDB'ye yazılıp aynen geri okunmalı."""
+        from core.inventory import items_from_observation
+        from core.models import BoundingBox
+
+        repo.put_upload(
+            UploadRecord(
+                upload_id="upl_3",
+                user_id="u_demo",
+                status=UploadStatus.PENDING,
+                created_at=NOW,
+                object_key="uploads/u_demo/2026-03-10/upl_3.jpg",
+            )
+        )
+        boxed = _food(name="domates")
+        boxed = ExtractedFood(
+            name=boxed.name,
+            category=boxed.category,
+            subcategory=boxed.subcategory,
+            package_state=boxed.package_state,
+            quantity=boxed.quantity,
+            confidence=boxed.confidence,
+            bounding_box=BoundingBox(ymin=120, xmin=60, ymax=640, xmax=340),
+        )
+        observation = _observation(upload_id="upl_3", foods=[boxed])
+        items, _ = items_from_observation(observation, NOW)
+        repo.commit_extraction(observation, items)
+
+        (item,) = repo.get_items("u_demo", [items[0].item_id])
+        assert item.bounding_box == BoundingBox(ymin=120, xmin=60, ymax=640, xmax=340)
+
 
 class TestListActiveItems:
     def test_orders_by_freshness_date_ascending(self, repo):

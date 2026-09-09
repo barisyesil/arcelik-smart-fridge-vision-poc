@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { Disclaimer } from "./components/Disclaimer";
+import { ExtractionResult } from "./components/ExtractionResult";
 import { InventoryList } from "./components/InventoryList";
 import { SettingsBar } from "./components/SettingsBar";
 import { UploadPanel } from "./components/UploadPanel";
@@ -11,6 +12,11 @@ export default function App() {
   const { config, setConfig, isConfigured } = useSettings();
   const inventory = useInventory(config, isConfigured);
   const { tickets, startUpload } = useUpload(config);
+
+  // Yalnızca tamamlanıp ürün bulunan yüklemeler için kırpma panelini göster.
+  const completedWithItems = tickets.filter(
+    (ticket) => ticket.status === "COMPLETED" && ticket.items.length > 0,
+  );
 
   const handleFileSelected = useCallback(
     (file: File) => {
@@ -48,6 +54,19 @@ export default function App() {
             </h2>
             <UploadPanel tickets={tickets} onFileSelected={handleFileSelected} disabled={false} />
           </section>
+
+          {completedWithItems.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                Çıkarım sonucu — kırpılan ürünler
+              </h2>
+              <div className="flex flex-col gap-3">
+                {completedWithItems.map((ticket) => (
+                  <ExtractionResult key={ticket.uploadId} ticket={ticket} />
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="flex flex-col gap-3">
             <div className="flex items-center justify-between">

@@ -49,6 +49,12 @@ Bu yapıyı oluştururken özellikle şu noktalara dikkat ettik:
 *Ayrıntılı görünüm; istemci, AWS servisleri, Gemini entegrasyonu, hata yönetimi
 ve Faz 1 kapsam sınırını birlikte gösterir.*
 
+> **Not:** Yukarıdaki üç diyagram, bounding box tabanlı ürün görseli kırpma
+> özelliğinden önce çizilmiştir. Yeni akışta ek olarak: Gemini yanıtı `box_2d`
+> taşır, `fridge-api` kaynak fotoğraf için presigned GET URL üretir ve tarayıcı
+> ürünleri bu kutulara göre kırpar. Diyagramlar bir sonraki güncellemede bu adımı
+> da içerecek şekilde yenilenmelidir.
+
 ### Akış nasıl çalışır?
 
 1. Web arayüzü seçilen fotoğrafı tarayıcıda en fazla 1024 piksele küçültür ve
@@ -59,12 +65,25 @@ ve Faz 1 kapsam sınırını birlikte gösterir.*
    `uploads/` önekli S3 alanına yüklenir.
 4. `ObjectCreated` olayı `fridge-extractor` Lambda fonksiyonunu tetikler.
 5. Görsel Gemini 2.5 Flash'a gönderilir; ürün adı, kategori, adet, ambalaj
-   durumu ve alan bazlı güven skorları alınır.
+   durumu, alan bazlı güven skorları **ve her ürün için sınırlayıcı kutu
+   (`box_2d`, 0-1000 normalize `[ymin, xmin, ymax, xmax]`)** alınır.
 6. Tazelik motoru, fotoğraf tarihi ile kategori/alt kategori raf ömrü
    kurallarını birleştirir.
-7. Gözlem, ürünler ve işlem durumu DynamoDB'ye atomik olarak yazılır.
-8. Web arayüzü işlem durumunu kısa aralıklarla sorgular ve tamamlandığında
-   güncel envanteri gösterir.
+7. Gözlem, ürünler (kutularıyla birlikte) ve işlem durumu DynamoDB'ye atomik
+   olarak yazılır.
+8. Web arayüzü işlem durumunu kısa aralıklarla sorgular; tamamlandığında hem
+   güncel envanteri gösterir hem de **her ürünü kutusuna göre kaynak
+   fotoğraftan kırpıp ayrı bir görsel olarak** sunar.
+
+> **Ürün görseli kırpma (Faz 1 prototipi):** Kutuya göre kırpma şu an bilinçli
+> olarak tarayıcıda yapılıyor — amaç, hazır bir görsel modelinin ürün konumlarını
+> yeterli doğrulukta verebildiğini kanıtlamak. `fridge-api`, işlem tamamlandığında
+> kaynak fotoğrafın kısa ömürlü presigned GET URL'sini döner (`GET
+> /v1/uploads/{id}` → `source_image_url`); tarayıcı bu görseli çekip her kutuyu
+> kendi görsel boyutuyla çarparak kırpar. Sonraki fazda bu işlem buluta
+> (`fridge-extractor` içinde Pillow ile kırpma → S3 `crops/` önekinde saklama)
+> taşınacak; kutular pipeline'dan zaten geçtiği için bu, yerel bir değişiklik
+> olacak. Bu görseller ileride mobil uygulamada ürün görseli olarak kullanılacak.
 
 ### AWS servisleri üzerinden işlem akışı
 
@@ -90,7 +109,8 @@ Bu fazda hazırladığımız parçalar şunlar:
 | Hazırladığımız parça | Bu projede ne yapıyor? |
 |---|---|
 | **Web demo arayüzü** | React ve Vite ile geliştirildi. Fotoğraf yükleme, işlem durumunu takip etme ve envanteri görüntüleme/düzeltme/silme işlemlerini içeriyor. |
-| **Vision-LLM ile ürün tanıma** | Gemini 2.5 Flash, fotoğraftaki ürünlerin adını, kategorisini, alt kategorisini, ambalaj durumunu, miktarını ve confidence score değerlerini çıkarıyor. |
+| **Vision-LLM ile ürün tanıma** | Gemini 2.5 Flash, fotoğraftaki ürünlerin adını, kategorisini, alt kategorisini, ambalaj durumunu, miktarını, confidence score değerlerini ve her ürün için sınırlayıcı kutuyu (`box_2d`) çıkarıyor. |
+| **Kutuya göre ürün görseli kırpma** | Gemini'nin döndürdüğü kutular kullanılarak toplu fotoğraftaki her ürün ayrı bir görsele kırpılıp arayüzde tek tek gösteriliyor. Faz 1'de kırpma tarayıcıda yapılıyor (prototip); ileride buluta taşınacak. |
 | **Rule-based freshness estimation** | Modelden SKT/TETT üretmesini istemiyoruz. `estimated_freshness_date`, fotoğraf tarihi ile kategori ve ambalaj durumuna göre hazırladığımız raf ömrü kurallarından hesaplanıyor. |
 | **Inventory CRUD** | Bulunan ürünler envantere eklenebiliyor (`Create`), listelenebiliyor (`Read`), düzeltilebiliyor veya tüketildi/atıldı olarak işaretlenebiliyor (`Update`) ve silinebiliyor (`Delete`). |
 | **Field-level confidence score** | Ürün adı ve kategori için güven değerlerini ayrı tutuyoruz. Güven değeri %70'in altına düşen kayıtları `needs_review` olarak işaretliyoruz. |
@@ -204,7 +224,7 @@ AWS bölgesi `eu-central-1` (Frankfurt) olarak sabitlenmiştir.
 | Metot | Yol | Amaç |
 |---|---|---|
 | `POST` | `/v1/uploads` | Presigned POST ve `upload_id` üretir |
-| `GET` | `/v1/uploads/{upload_id}` | İşlem durumunu ve oluşan ürünleri döndürür |
+| `GET` | `/v1/uploads/{upload_id}` | İşlem durumunu, oluşan ürünleri (kutularıyla) ve kaynak fotoğrafın presigned GET URL'sini döndürür |
 | `GET` | `/v1/items` | Aktif envanteri tazelik sırasıyla listeler |
 | `PATCH` | `/v1/items/{item_id}` | Ürün bilgisini veya durumunu düzeltir |
 | `DELETE` | `/v1/items/{item_id}` | Envanter kaydını siler |

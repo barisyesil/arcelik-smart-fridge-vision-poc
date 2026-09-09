@@ -38,3 +38,4 @@ fixtures/images/*
 !.vscode/extensions.json
 .DS_Store
 Thumbs.db
+/graphify-out
