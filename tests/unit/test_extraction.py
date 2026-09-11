@@ -14,6 +14,7 @@ def _product(**overrides):
         "package_state": "unopened",
         "quantity": {"value": 1, "unit": "piece"},
         "confidence": {"name": 0.91, "category": 0.97},
+        "box_2d": [100, 200, 400, 500],
     }
     return {**base, **overrides}
 
@@ -88,3 +89,48 @@ def test_empty_and_malformed_records_are_skipped():
 
 def test_missing_products_key_returns_empty_list():
     assert parse_extraction({}) == []
+
+
+def test_bounding_box_is_parsed_from_box_2d():
+    (food,) = parse_extraction({"products": [_product()]})
+    assert food.bounding_box is not None
+    assert (
+        food.bounding_box.ymin,
+        food.bounding_box.xmin,
+        food.bounding_box.ymax,
+        food.bounding_box.xmax,
+    ) == (100, 200, 400, 500)
+
+
+def test_missing_box_leaves_bounding_box_none_but_keeps_product():
+    payload = {"products": [_product()]}
+    del payload["products"][0]["box_2d"]
+    (food,) = parse_extraction(payload)
+    assert food.bounding_box is None
+    assert food.name == "süzme yoğurt"
+
+
+def test_schema_declares_box_2d_but_does_not_require_it():
+    """Kutu ayrı bir sinyal: model üretemezse ürünün tamamı düşmesin diye
+    `box_2d` şemada var ama `required` değil."""
+    items = build_response_schema()["properties"]["products"]["items"]
+    assert "box_2d" in items["properties"]
+    assert items["properties"]["box_2d"]["maxItems"] == 4
+    assert "box_2d" not in items["required"]
+
+
+def test_out_of_range_box_is_dropped_not_product():
+    (food,) = parse_extraction({"products": [_product(box_2d=[0, 0, 400, 1200])]})
+    assert food.bounding_box is None
+    assert food.name == "süzme yoğurt"
+
+
+def test_wrong_length_box_is_dropped():
+    (food,) = parse_extraction({"products": [_product(box_2d=[100, 200, 400])]})
+    assert food.bounding_box is None
+
+
+def test_zero_area_box_is_dropped():
+    """Kırpılamayan (ymin>=ymax veya xmin>=xmax) kutu atılır."""
+    (food,) = parse_extraction({"products": [_product(box_2d=[400, 200, 400, 500])]})
+    assert food.bounding_box is None

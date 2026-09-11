@@ -69,6 +69,27 @@ class Quantity:
 
 
 @dataclass(frozen=True)
+class BoundingBox:
+    """Gemini 2.5'in ürün için döndürdüğü sınırlayıcı kutu.
+
+    Gemini konvansiyonu: değerler `[ymin, xmin, ymax, xmax]` sırasında ve
+    0-1000 aralığına normalize edilir (fotoğrafın gerçek piksel boyutundan
+    BAĞIMSIZ). Çözünürlükten bağımsız olması bilinçli: kutu, Gemini'nin gördüğü
+    S3'teki küçültülmüş görsele de, ileride farklı boyutta bir kopyaya da aynı
+    şekilde uygulanır. Kırpma yapan taraf (şimdilik tarayıcı, ileride Lambda)
+    bu oranları kendi görsel boyutuyla çarpar.
+
+    Alan API kontratının parçasıdır: item DTO'sunda `bounding_box` olarak
+    istemciye gider.
+    """
+
+    ymin: int
+    xmin: int
+    ymax: int
+    xmax: int
+
+
+@dataclass(frozen=True)
 class ExtractedFood:
     """Modelin tek bir gıda için döndürdüğü ham çıkarım.
 
@@ -76,6 +97,10 @@ class ExtractedFood:
     gördüğü etiketin aynen kendisidir ("Süzme Yoğurt 750g") — doğruluk ölçümünde
     "model neyi yanlış okudu" sorusunu cevaplayan alan budur; normalize edilmiş
     `name` bu bilgiyi siler.
+
+    `bounding_box` modelin ürünü fotoğrafta nerede gördüğüdür; tanınmayan ya da
+    geçersiz kutu `None` kalır ve ürün yine de envantere girer — kutu bir ek
+    sinyaldir, ürünün varlığının ön koşulu değil.
     """
 
     name: str
@@ -86,6 +111,7 @@ class ExtractedFood:
     brand: str | None = None
     subcategory: str | None = None
     package_state: PackageState = PackageState.UNKNOWN
+    bounding_box: BoundingBox | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +159,10 @@ class InventoryItem:
     state: ItemState = ItemState.ACTIVE
     confidence: FieldConfidence | None = None
     needs_review: bool = False
+    #: Ürünün kaynak fotoğraftaki konumu. Arayüz, kaynak görseli bu kutuya göre
+    #: kırpıp ürünü ayrı bir görsel olarak gösterir. Kutu yoksa arayüz kırpma
+    #: yapmaz, ürün metinle listelenir.
+    bounding_box: BoundingBox | None = None
     schema_version: str = SCHEMA_VERSION
 
 

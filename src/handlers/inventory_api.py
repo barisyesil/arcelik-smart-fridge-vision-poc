@@ -10,6 +10,7 @@ handler'ı değildir.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import asdict
 
@@ -29,7 +30,17 @@ from handlers._http import (
 )
 from handlers.presign import create_upload
 
+logger = logging.getLogger()
+
 TABLE_NAME = os.environ.get("TABLE_NAME", "")
+BUCKET_NAME = os.environ.get("BUCKET_NAME", "")
+
+#: Kaynak fotoğrafın presigned GET ömrü. Arayüz bu URL ile görseli çekip her
+#: ürünü bounding box'a göre kırpar; işlem tamamlanır tamamlanmaz kullanıldığı
+#: için kısa bir süre yeterli.
+SOURCE_IMAGE_URL_EXPIRY_S = 300
+
+_s3_client = None
 
 ROUTES = (
     "POST /v1/uploads",
@@ -50,6 +61,34 @@ def _get_repository() -> DynamoRepository:
     return _repository
 
 
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
+
+
+def _source_image_url(object_key: str) -> str | None:
+    """Kaynak fotoğraf için kısa ömürlü presigned GET URL'si.
+
+    Kutuya göre kırpma şimdilik tarayıcıda yapıldığı için arayüzün Gemini'nin
+    gördüğü aynı görsele erişmesi gerekir. Bucket dışarıya kapalı; erişimin tek
+    yolu bu imzalı URL. Üretim başarısız olursa (izin/ağ) `None` döneriz —
+    kırpma özelliği kaybolur ama envanter listesi çalışmaya devam eder.
+    """
+    if not BUCKET_NAME:
+        return None
+    try:
+        return _get_s3_client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET_NAME, "Key": object_key},
+            ExpiresIn=SOURCE_IMAGE_URL_EXPIRY_S,
+        )
+    except Exception:  # noqa: BLE001 — presign hatası özelliği düşürür, isteği değil
+        logger.warning('{"event": "source_image_presign_failed"}')
+        return None
+
+
 def _item_to_json(item: InventoryItem) -> dict:
     """İstemcinin gördüğü ürün nesnesi — API kontratı v1 ile birebir eşleşir."""
     return {
@@ -66,6 +105,9 @@ def _item_to_json(item: InventoryItem) -> dict:
         "confidence": asdict(item.confidence) if item.confidence else None,
         "needs_review": item.needs_review,
         "state": item.state.value,
+        # Arayüz bu kutuyu kaynak görsele uygulayıp ürünü ayrı görsel olarak
+        # kırpar. Kutu yoksa `None` — arayüz kırpma yapmaz.
+        "bounding_box": asdict(item.bounding_box) if item.bounding_box else None,
     }
 
 
@@ -76,9 +118,15 @@ def _get_upload_status(event: dict) -> dict:
         return respond(404, {"error": "upload_not_found", "upload_id": upload_id})
 
     items = []
+    source_image_url = None
     if record.status is UploadStatus.COMPLETED and record.item_ids:
         found = _get_repository().get_items(record.user_id, list(record.item_ids))
         items = [_item_to_json(item) for item in found]
+        # Tek presigned URL tüm ürünler için: hepsi aynı kaynak fotoğraftan
+        # kırpılır. Yalnızca kırpılacak kutusu olan bir ürün varsa üret —
+        # kutusuz sonuçta görsele hiç ihtiyaç yok.
+        if any(item["bounding_box"] for item in items):
+            source_image_url = _source_image_url(record.object_key)
 
     return respond(
         200,
@@ -87,6 +135,7 @@ def _get_upload_status(event: dict) -> dict:
             "status": record.status.value,
             "observation_id": record.observation_id,
             "items": items,
+            "source_image_url": source_image_url,
             "error": record.error_code,
         },
     )

@@ -23,6 +23,18 @@ export interface FieldConfidence {
   category: number;
 }
 
+/**
+ * Ürünün kaynak fotoğraftaki konumu. Gemini konvansiyonu: `[ymin, xmin, ymax,
+ * xmax]`, 0-1000 aralığına normalize. Arayüz bu oranları kaynak görselin gerçek
+ * piksel boyutuyla çarpıp ürünü ayrı bir görsele kırpar. Kutu yoksa `null`.
+ */
+export interface BoundingBox {
+  ymin: number;
+  xmin: number;
+  ymax: number;
+  xmax: number;
+}
+
 export interface InventoryItemDto {
   item_id: string;
   name: string;
@@ -37,6 +49,7 @@ export interface InventoryItemDto {
   confidence: FieldConfidence | null;
   needs_review: boolean;
   state: ItemState;
+  bounding_box: BoundingBox | null;
 }
 
 export interface CreateUploadResponse {
@@ -52,6 +65,12 @@ export interface UploadStatusResponse {
   status: UploadStatusValue;
   observation_id: string | null;
   items: InventoryItemDto[];
+  /**
+   * İşlem tamamlandığında ve kırpılacak en az bir kutu varsa, kaynak
+   * fotoğrafın kısa ömürlü presigned GET URL'si. Arayüz ürünleri bundan
+   * kırpar. Kutu yoksa veya URL üretilemediyse `null`.
+   */
+  source_image_url: string | null;
   error: string | null;
 }
 

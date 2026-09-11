@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError
 from core.inventory import gsi1_keys, idempotency_key, item_sk, observation_sk, upload_keys, user_pk
 from core.models import (
     SCHEMA_VERSION,
+    BoundingBox,
     ExtractedFood,
     FieldConfidence,
     FreshnessBasis,
@@ -127,6 +128,25 @@ def _confidence_from_dict(data: dict) -> FieldConfidence:
     return FieldConfidence(name=float(data["name"]), category=float(data["category"]))
 
 
+def _bounding_box_to_dict(box: BoundingBox | None) -> dict | None:
+    # Kutu koordinatları tam sayı (0-1000); DynamoDB tam sayıyı native kabul
+    # eder, Decimal sarmalamaya gerek yok (skorlardan farklı olarak).
+    if box is None:
+        return None
+    return {"ymin": box.ymin, "xmin": box.xmin, "ymax": box.ymax, "xmax": box.xmax}
+
+
+def _bounding_box_from_dict(data: object) -> BoundingBox | None:
+    if not isinstance(data, dict):
+        return None
+    return BoundingBox(
+        ymin=int(data["ymin"]),
+        xmin=int(data["xmin"]),
+        ymax=int(data["ymax"]),
+        xmax=int(data["xmax"]),
+    )
+
+
 def _extracted_food_to_dict(food: ExtractedFood) -> dict:
     return {
         "name": food.name,
@@ -137,6 +157,7 @@ def _extracted_food_to_dict(food: ExtractedFood) -> dict:
         "package_state": food.package_state.value,
         "quantity": _quantity_to_dict(food.quantity),
         "confidence": _confidence_to_dict(food.confidence),
+        "bounding_box": _bounding_box_to_dict(food.bounding_box),
     }
 
 
@@ -182,6 +203,7 @@ def _serialize_item(item: InventoryItem) -> dict:
         "state": item.state.value,
         "confidence": _confidence_to_dict(item.confidence) if item.confidence else None,
         "needs_review": item.needs_review,
+        "bounding_box": _bounding_box_to_dict(item.bounding_box),
         "schema_version": item.schema_version,
     }
     row.update(gsi1_keys(item.user_id, item))
@@ -208,6 +230,7 @@ def _deserialize_item(data: dict) -> InventoryItem:
         state=ItemState(data["state"]),
         confidence=_confidence_from_dict(confidence_raw) if confidence_raw else None,
         needs_review=bool(data.get("needs_review", False)),
+        bounding_box=_bounding_box_from_dict(data.get("bounding_box")),
         schema_version=data.get("schema_version", SCHEMA_VERSION),
     )
 

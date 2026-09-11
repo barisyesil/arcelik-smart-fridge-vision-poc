@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { createUpload, getUploadStatus, uploadToS3, type ApiConfig } from "../api/client";
-import type { UploadStatusValue } from "../api/types";
+import type { InventoryItemDto, UploadStatusValue } from "../api/types";
 import { resizeToJpeg } from "../lib/resizeImage";
 
 const POLL_INTERVAL_MS = 2000;
@@ -15,6 +15,11 @@ export interface UploadTicket {
   status: UploadStatusValue | "UPLOADING" | "TIMED_OUT";
   error: string | null;
   itemCount: number;
+  //: İşlem tamamlandığında dolan sonuç: bulunan ürünler ve kaynak fotoğrafın
+  //: presigned URL'si. `ExtractionResult` bu ikisiyle ürünleri kutulara göre
+  //: kırpar. Tamamlanana kadar boş kalırlar.
+  items: InventoryItemDto[];
+  sourceImageUrl: string | null;
 }
 
 export function useUpload(config: ApiConfig) {
@@ -47,6 +52,8 @@ export function useUpload(config: ApiConfig) {
               status: result.status,
               error: result.error,
               itemCount: result.items.length,
+              items: result.items,
+              sourceImageUrl: result.source_image_url,
             });
             onSettled();
           }
@@ -77,6 +84,8 @@ export function useUpload(config: ApiConfig) {
           status: "UPLOADING",
           error: null,
           itemCount: 0,
+          items: [],
+          sourceImageUrl: null,
         },
         ...prev,
       ]);

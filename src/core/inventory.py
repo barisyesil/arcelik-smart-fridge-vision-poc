@@ -125,6 +125,7 @@ def build_item(
         observation_id=observation_id,
         confidence=food.confidence,
         needs_review=food.confidence.needs_review,
+        bounding_box=food.bounding_box,
     )
     return item, estimate.warning
 

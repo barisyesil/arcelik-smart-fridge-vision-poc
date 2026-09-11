@@ -374,9 +374,13 @@ class FridgeStack(Stack):
         raw_bucket_arn = f"arn:{Aws.PARTITION}:s3:::{raw_bucket_name}"
 
         self.table.grant_read_write_data(self.api_function)
+        # PutObject: presigned POST üretimi (yükleme). GetObject: fridge-api,
+        # işlem tamamlandığında arayüzün ürünleri bounding box'a göre kırpması
+        # için kaynak fotoğrafın presigned GET URL'sini üretir. İkisi de yalnızca
+        # `uploads/*` önekiyle sınırlı.
         self.api_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:PutObject"],
+                actions=["s3:PutObject", "s3:GetObject"],
                 resources=[f"{raw_bucket_arn}/uploads/*"],
             )
         )
