@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiConfig } from "../api/client";
 
-const STORAGE_KEY = "fridge.settings.v1";
+export interface DeploySettings {
+  baseUrl: string;
+  /** Cognito Hosted UI taban URL'si, örn. https://fridge-123.auth.eu-central-1.amazoncognito.com */
+  cognitoDomain: string;
+  /** Web test client ID (CDK çıktısı `WebTestClientId`). */
+  cognitoClientId: string;
+}
 
-const DEFAULTS: ApiConfig = {
+const STORAGE_KEY = "fridge.settings.v2";
+
+const DEFAULTS: DeploySettings = {
   baseUrl: import.meta.env.VITE_API_URL ?? "",
-  userId: "u_demo",
+  cognitoDomain: import.meta.env.VITE_COGNITO_DOMAIN ?? "",
+  cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID ?? "",
 };
 
-function load(): ApiConfig {
+function load(): DeploySettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw) as Partial<ApiConfig>;
+    const parsed = JSON.parse(raw) as Partial<DeploySettings>;
     return { ...DEFAULTS, ...parsed };
   } catch {
     return DEFAULTS;
@@ -20,27 +28,30 @@ function load(): ApiConfig {
 }
 
 /**
- * API adresi ve `x-user-id` tarayıcıda saklanır — Faz 1'de kimlik doğrulama
- * yok, bu yüzden bu ayar bir "hangi kullanıcı gibi davranayım" anahtarıdır,
- * gerçek bir kimlik değildir.
+ * Bu deploy'a özel bağlantı bilgileri (API adresi + Cognito domain/client)
+ * tarayıcıda saklanır. Kimlik doğrulama Cognito'da olur (bkz. `useAuth`); bu
+ * ayarlar yalnızca "hangi backend'e/hangi kullanıcı havuzuna bağlanayım"
+ * sorusunu cevaplar, bir kimlik değildir.
  */
 export function useSettings() {
-  const [config, setConfigState] = useState<ApiConfig>(load);
+  const [config, setConfigState] = useState<DeploySettings>(load);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
     } catch {
-      // Gizli sekme / depolama kapalı: sessizce yok say, bir sonraki
-      // oturumda varsayılana döner.
+      // Gizli sekme / depolama kapalı: sessizce yok say.
     }
   }, [config]);
 
-  const setConfig = useCallback((next: Partial<ApiConfig>) => {
+  const setConfig = useCallback((next: Partial<DeploySettings>) => {
     setConfigState((prev) => ({ ...prev, ...next }));
   }, []);
 
-  const isConfigured = config.baseUrl.trim().length > 0;
+  const isConfigured =
+    config.baseUrl.trim().length > 0 &&
+    config.cognitoDomain.trim().length > 0 &&
+    config.cognitoClientId.trim().length > 0;
 
   return { config, setConfig, isConfigured };
 }

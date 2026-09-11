@@ -170,6 +170,20 @@ export const QUANTITY_UNIT_LABELS: Record<string, string> = {
   milliliter: "ml",
 };
 
+export const REVIEW_REASON_LABELS: Record<string, string> = {
+  USER_SCHEDULED: "Kontrol zamanı geldi",
+  OVERDUE: "Süresi geçti",
+  CRITICAL: "Kritik (0-2 gün)",
+  APPROACHING: "Yaklaşıyor (3-5 gün)",
+  NEEDS_REVIEW: "Doğrulama gerekiyor",
+};
+
+export const NOTIFICATION_MODE_LABELS: Record<string, string> = {
+  DAILY_DIGEST: "Günlük özet",
+  CRITICAL_ONLY: "Yalnız kritik",
+  OFF: "Kapalı",
+};
+
 function label(map: Record<string, string>, key: string | null | undefined): string {
   if (!key) return "—";
   return map[key] ?? key;
@@ -183,3 +197,7 @@ export const uploadStatusLabel = (key: string | null | undefined) =>
   label(UPLOAD_STATUS_LABELS, key);
 export const quantityUnitLabel = (key: string | null | undefined) =>
   label(QUANTITY_UNIT_LABELS, key);
+export const reviewReasonLabel = (key: string | null | undefined) =>
+  label(REVIEW_REASON_LABELS, key);
+export const notificationModeLabel = (key: string | null | undefined) =>
+  label(NOTIFICATION_MODE_LABELS, key);

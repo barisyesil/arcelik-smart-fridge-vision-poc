@@ -1,4 +1,4 @@
-import type { InventoryItemDto, ItemPatch } from "../api/types";
+import type { DiscardReason, InventoryItemDto, ItemPatch } from "../api/types";
 import { ItemCard } from "./ItemCard";
 
 interface InventoryListProps {
@@ -7,9 +7,19 @@ interface InventoryListProps {
   error: string | null;
   onUpdate: (itemId: string, patch: ItemPatch) => Promise<void>;
   onDelete: (itemId: string) => Promise<void>;
+  onSwipe: (item: InventoryItemDto, type: "CONSUMED" | "DISCARDED", reason?: DiscardReason) => Promise<void>;
+  onOpenAssessment: (item: InventoryItemDto) => void;
 }
 
-export function InventoryList({ items, isLoading, error, onUpdate, onDelete }: InventoryListProps) {
+export function InventoryList({
+  items,
+  isLoading,
+  error,
+  onUpdate,
+  onDelete,
+  onSwipe,
+  onOpenAssessment,
+}: InventoryListProps) {
   if (error) {
     return (
       <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
@@ -30,7 +40,7 @@ export function InventoryList({ items, isLoading, error, onUpdate, onDelete }: I
     );
   }
 
-  // Backend zaten GSI1'den tazelik tarihine göre artan sırada döndürür;
+  // Backend zaten GSI1'den etkin tazelik tarihine göre artan sırada döndürür;
   // burada ayrıca sıralama yapmıyoruz. Erişim deseni doğru tasarlandığı için
   // istemci tarafında sıralamaya gerek kalmıyor.
   return (
@@ -41,6 +51,8 @@ export function InventoryList({ items, isLoading, error, onUpdate, onDelete }: I
           item={item}
           onUpdate={(patch) => onUpdate(item.item_id, patch)}
           onDelete={() => onDelete(item.item_id)}
+          onSwipe={(type, reason) => onSwipe(item, type, reason)}
+          onOpenAssessment={() => onOpenAssessment(item)}
         />
       ))}
     </ul>

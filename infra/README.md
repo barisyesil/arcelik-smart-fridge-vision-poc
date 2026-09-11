@@ -16,12 +16,29 @@ Tüm altyapı Python ile yazılmış tek bir AWS CDK stack'idir
 | 4 | SSM parametre referansı | Gemini anahtarı; değer **elle** oluşturulur (aşağıda) |
 | 5 | Lambda `fridge-api` / `fridge-extractor` | arm64, Python 3.12, VPC yok |
 | 6 | S3 `fridge-raw-{hesap}` | Public access kapalı, SSE-S3, CORS, 30 gün lifecycle, olay bildirimi |
-| 7 | HTTP API `fridge-api-gw` | 5 rota, throttling 5 rps / burst 10, CORS kısıtlı |
+| 6.5 | Cognito User Pool + 2 client + Hosted UI domain | Mobil client (deep-link) + web test client (localhost); JWT authorizer bu havuzu kullanır |
+| 7 | HTTP API `fridge-api-gw` | 24 rota, tümü JWT authorizer arkasında, throttling 5 rps / burst 10, CORS kısıtlı |
 | 8 | Budget 5 USD | %80 ve %100 eşiklerinde e-posta alarmı |
 | 9 | IAM rolleri (×2) | Kaynak bazlı, wildcard yok |
+| 10 | Fridge registry seed | `AwsCustomResource` ile 3 prototip buzdolabı ID'si (`ARC-FRIDGE-001..003`) her deploy'da yazılır |
 
-Deploy sonunda üç çıktı verilir: `ApiUrl`, `BucketName`, `TableName`. `ApiUrl`
-web arayüzünün `VITE_API_URL` değeridir.
+Deploy sonunda şu çıktılar verilir:
+
+| Çıktı | Ne işe yarar |
+|---|---|
+| `ApiUrl` | Web/mobil `baseUrl` — API Gateway adresi |
+| `BucketName`, `TableName` | Referans/tanı amaçlı |
+| `UserPoolId` | Mobil (Kotlin) tarafın Cognito SDK yapılandırması için |
+| `UserPoolClientId` | **Mobil** uygulamanın Cognito client ID'si (deep-link callback) |
+| `WebTestClientId` | **Web test arayüzünün** Cognito client ID'si (localhost callback) — mobil client'tan farklı |
+| `CognitoDomain` | Hosted UI taban URL'si (`/oauth2/authorize`, `/oauth2/token`, `/logout`) |
+| `SeedFridgeIds` | Kayıtta kullanılabilecek geçerli buzdolabı ID'leri |
+
+> **Kimlik doğrulama zorunlu.** `fridge-api` Lambda'sı `AUTH_MODE=jwt` ile
+> çalışır: kimlik yalnızca API Gateway JWT authorizer'ın doğruladığı Cognito
+> `id_token`'ın `sub` claim'inden gelir. Deploy edilmiş bir stack'e karşı
+> `x-user-id` header'ı işe yaramaz — önce Cognito'da bir kullanıcı
+> oluşturup (Hosted UI üzerinden kaydolarak) giriş yapman gerekir.
 
 ## Gereksinimler
 
@@ -90,15 +107,46 @@ alarmları ekle (Period 5 dk, eksik veri = "iyi/breaching değil"):
 
 En kritik olan sonuncusudur: DLQ'da mesaj varsa iş kaybı var demektir.
 
-## Uçtan uca doğrulama
+## Web arayüzü yapılandırması
+
+Deploy çıktılarından `web/.env` doldurulur:
 
 ```bash
-echo "VITE_API_URL=<ApiUrl>" > ../web/.env
+cat > ../web/.env <<EOF
+VITE_API_URL=<ApiUrl>
+VITE_COGNITO_DOMAIN=<CognitoDomain>
+VITE_COGNITO_CLIENT_ID=<WebTestClientId>
+EOF
 cd ../web && npm install && npm run dev   # http://localhost:5173
 ```
 
-Bir gıda fotoğrafı yükle; `/aws/lambda/fridge-extractor` log grubunda
-`extraction_completed` satırını gör, envanterde ürünün belirmesini bekle.
+`WebTestClientId` kullan — `UserPoolClientId` (mobil) DEĞİL; ikisinin callback
+allowlist'i farklıdır (web: `http://localhost:5173/auth/callback`, mobil:
+`arcelikfridge://auth`), biri diğerinin yerine kullanılamaz.
+
+## Uçtan uca doğrulama
+
+1. **Kayıt ol.** `http://localhost:5173` açılınca ayarlar zaten `.env`'den
+   dolu gelir (veya elle gir). "Cognito ile Giriş Yap / Kaydol" butonuna bas;
+   Hosted UI'da yeni bir e-posta/şifre ile kaydol (e-posta doğrulama kodu
+   gelir — Cognito varsayılan e-posta gönderimini kullanır, sandbox modunda
+   yalnızca doğrulanmış adreslere gider, bkz. aşağıdaki not).
+2. **Profil oluştur.** Girişten sonra arayüz Ad-Soyad + buzdolabı ID'si
+   ister; `SeedFridgeIds` çıktısındaki ID'lerden birini gir (örn.
+   `ARC-FRIDGE-001`).
+3. **Fotoğraf yükle.** Bir gıda fotoğrafı yükle; `/aws/lambda/fridge-extractor`
+   log grubunda `extraction_completed` satırını gör, envanterde ürünün
+   belirmesini bekle.
+4. **Yeni özellikleri dene.** "Kontrol" sekmesinde swipe aksiyonlarını
+   (Tükettim/Attım/Kontrol Et), "Listem" sekmesinde önerilen alışveriş
+   kalemlerini, "Tarifler" sekmesinde stok uyumlu önerileri gör.
+
+> **Cognito e-posta sandbox'ı.** Yeni bir Cognito User Pool varsayılan olarak
+> SES sandbox modunda gönderim yapar — yalnızca SES konsolunda doğrulanmış
+> e-posta adreslerine doğrulama kodu gider. Test için kendi e-postanı SES'te
+> doğrula (`aws ses verify-email-identity --email-address SENIN@EMAIL.COM
+> --region eu-central-1`) ya da Cognito konsolundan kullanıcıyı manuel
+> `CONFIRMED` durumuna al.
 
 ## Silme
 
@@ -106,8 +154,9 @@ Bir gıda fotoğrafı yükle; `/aws/lambda/fridge-extractor` log grubunda
 cdk destroy
 ```
 
-Tüm kaynaklar `removalPolicy=DESTROY` ile tanımlıdır; stack silindiğinde geride
-kaynak kalmaz. SSM parametresi elle oluşturulduğu için elle silinir:
+Tüm kaynaklar `removalPolicy=DESTROY` ile tanımlıdır (Cognito User Pool dahil);
+stack silindiğinde geride kaynak kalmaz. SSM parametresi elle oluşturulduğu
+için elle silinir:
 
 ```bash
 aws ssm delete-parameter --name /smartfridge/dev/gemini-api-key --region eu-central-1

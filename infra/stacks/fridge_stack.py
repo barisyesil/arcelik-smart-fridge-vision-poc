@@ -289,11 +289,37 @@ class FridgeStack(Stack):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE,
                 ],
-                # Mobil deep link (PKCE geri dönüşü). Web test aracı ayrı client
-                # veya dev auth ile çalışır.
+                # Mobil deep link (PKCE geri dönüşü).
                 callback_urls=["arcelikfridge://auth"],
                 logout_urls=["arcelikfridge://signout"],
             ),
+        )
+        # Web test arayüzü için AYRI public client. Aynı client'ı mobil deep-link
+        # ve tarayıcı localhost callback'iyle paylaşmıyoruz: biri sızarsa diğerinin
+        # callback allowlist'i değişmez. Cognito Hosted UI, `http://localhost`
+        # callback/logout URL'lerine (yalnızca localhost) test amaçlı izin verir.
+        self.web_client = self.user_pool.add_client(
+            "WebTestClient",
+            user_pool_client_name="fridge-web-test",
+            generate_secret=False,
+            auth_flows=cognito.AuthFlow(user_srp=True),
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE,
+                ],
+                callback_urls=["http://localhost:5173/auth/callback"],
+                logout_urls=["http://localhost:5173/"],
+            ),
+        )
+        # Hosted UI domain: /oauth2/authorize, /oauth2/token, /logout buradan
+        # sunulur. Prefix hesap kimliğinden türetilir — global olarak benzersiz
+        # olmalı, hesap ID'si bunu garanti eder.
+        self.user_pool_domain = self.user_pool.add_domain(
+            "Domain",
+            cognito_domain=cognito.CognitoDomainOptions(domain_prefix=f"fridge-{Aws.ACCOUNT_ID}"),
         )
 
         # ------------------------------------------------------------------
@@ -331,7 +357,7 @@ class FridgeStack(Stack):
         jwt_authorizer = apigatewayv2_authorizers.HttpUserPoolAuthorizer(
             "JwtAuthorizer",
             self.user_pool,
-            user_pool_clients=[self.user_pool_client],
+            user_pool_clients=[self.user_pool_client, self.web_client],
         )
         # API kontratı v1 — tüm rotalar JWT ister. Bu liste
         # `handlers.inventory_api.ROUTES` ile birebir eşleşmeli
@@ -513,7 +539,24 @@ class FridgeStack(Stack):
         CfnOutput(self, "BucketName", value=self.raw_bucket.bucket_name)
         CfnOutput(self, "TableName", value=self.table.table_name)
         CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
-        CfnOutput(self, "UserPoolClientId", value=self.user_pool_client.user_pool_client_id)
+        CfnOutput(
+            self,
+            "UserPoolClientId",
+            value=self.user_pool_client.user_pool_client_id,
+            description="Mobil (Kotlin) uygulamanın kullanacağı Cognito app client ID",
+        )
+        CfnOutput(
+            self,
+            "WebTestClientId",
+            value=self.web_client.user_pool_client_id,
+            description="Web test arayüzünün kullanacağı Cognito app client ID",
+        )
+        CfnOutput(
+            self,
+            "CognitoDomain",
+            value=f"https://{self.user_pool_domain.domain_name}.auth.{Aws.REGION}.amazoncognito.com",
+            description="Hosted UI / OAuth taban URL'si (authorize, token, logout uçları)",
+        )
         CfnOutput(
             self,
             "SeedFridgeIds",
