@@ -36,14 +36,18 @@ def _food(name="süzme yoğurt", category=FoodCategory.DAIRY, subcategory="yogur
     )
 
 
+FRIDGE = "ARC-FRIDGE-001"
+
+
 def _observation(foods):
     return Observation(
         observation_id="obs_1",
         user_id="u_demo",
+        fridge_id=FRIDGE,
         upload_id="upl_1",
         captured_at=NOW,
         source_bucket="fridge-raw-000",
-        source_key="uploads/u_demo/2026-03-10/abc.jpg",
+        source_key=f"uploads/{FRIDGE}/2026-03-10/abc.jpg",
         foods=tuple(foods),
         model_id="stub-vision-0",
         prompt_version="v1",
@@ -67,10 +71,15 @@ def test_idempotency_key_changes_with_etag():
 
 def test_active_item_gets_gsi1_keys_sorted_by_freshness_date():
     item, _ = build_item(
-        _food(), user_id="u_demo", observation_id="obs_1", captured_at=NOW, now=NOW
+        _food(),
+        fridge_id=FRIDGE,
+        user_id="u_demo",
+        observation_id="obs_1",
+        captured_at=NOW,
+        now=NOW,
     )
-    keys = gsi1_keys("u_demo", item)
-    assert keys["GSI1PK"] == "USER#u_demo#ACTIVE"
+    keys = gsi1_keys(FRIDGE, item)
+    assert keys["GSI1PK"] == f"FRIDGE#{FRIDGE}#ACTIVE"
     assert keys["GSI1SK"].startswith("FRESH#2026-03-31#")
 
 
@@ -85,13 +94,20 @@ def test_bounding_box_survives_into_the_inventory_item():
         confidence=FieldConfidence(name=0.9, category=0.9),
         bounding_box=box,
     )
-    item, _ = build_item(food, user_id="u_demo", observation_id="obs_1", captured_at=NOW, now=NOW)
+    item, _ = build_item(
+        food, fridge_id=FRIDGE, user_id="u_demo", observation_id="obs_1", captured_at=NOW, now=NOW
+    )
     assert item.bounding_box == box
 
 
 def test_food_without_box_yields_item_without_box():
     item, _ = build_item(
-        _food(), user_id="u_demo", observation_id="obs_1", captured_at=NOW, now=NOW
+        _food(),
+        fridge_id=FRIDGE,
+        user_id="u_demo",
+        observation_id="obs_1",
+        captured_at=NOW,
+        now=NOW,
     )
     assert item.bounding_box is None
 
@@ -99,10 +115,15 @@ def test_food_without_box_yields_item_without_box():
 def test_consumed_item_yields_no_gsi1_keys():
     """Sparse index: anahtarlar boş string değil, hiç yazılmamalı."""
     item, _ = build_item(
-        _food(), user_id="u_demo", observation_id="obs_1", captured_at=NOW, now=NOW
+        _food(),
+        fridge_id=FRIDGE,
+        user_id="u_demo",
+        observation_id="obs_1",
+        captured_at=NOW,
+        now=NOW,
     )
     item.state = ItemState.CONSUMED
-    assert gsi1_keys("u_demo", item) == {}
+    assert gsi1_keys(FRIDGE, item) == {}
 
 
 def test_every_food_becomes_an_item_no_deduplication():

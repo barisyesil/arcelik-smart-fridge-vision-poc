@@ -72,3 +72,11 @@ def aws_stack(dynamo_table):
         CreateBucketConfiguration={"LocationConstraint": REGION},
     )
     yield dynamo_table
+
+
+@pytest.fixture
+def s3_client(aws_stack):
+    """Sahte S3 client — presigned POST akışını taklit eden testler için."""
+    import boto3
+
+    return boto3.client("s3", region_name=REGION)

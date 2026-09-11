@@ -153,7 +153,8 @@ canlı AWS ortamının dağıtılmış olduğu anlamına gelmez.
 | Katman | Teknoloji | Rolü |
 |---|---|---|
 | İstemci | React, Vite, TypeScript | Görsel seçimi, tarayıcıda küçültme, yükleme ve envanter yönetimi |
-| API | Amazon API Gateway HTTP API | Yükleme izni, durum ve envanter uçları |
+| Kimlik | Amazon Cognito User Pool + API Gateway JWT authorizer | Mobil kimlik doğrulama (PKCE), `sub` bazlı sahiplik |
+| API | Amazon API Gateway HTTP API | Yükleme izni, durum, envanter, swipe, değerlendirme, alışveriş, tarif uçları |
 | Uygulama | AWS Lambda, Python 3.12, ARM64 | API işlemleri ve asenkron görsel çıkarımı |
 | Ham veri | Amazon S3 | Görselleri özel erişimle, 30 günlük yaşam döngüsüyle saklama |
 | Yapay zekâ | Gemini 2.5 Flash | Fotoğraftan yapılandırılmış ürün bilgisi çıkarma |
@@ -219,17 +220,55 @@ AWS bölgesi `eu-central-1` (Frankfurt) olarak sabitlenmiştir.
 > Ücretsiz katman kullanımı garanti değildir; gerçek maliyet AWS hesabının
 > koşullarına, trafik miktarına ve harici model kotasına bağlıdır.
 
+## Mobil cloud mimarisi (Faz 2)
+
+Native Android (Kotlin/Compose) mobil uygulamanın SRS'inde tanımlanan
+özellikleri karşılamak için cloud mimarisi genişletildi. Ayrıntılı gereksinimler
+için bkz. mobil SRS.
+
+**Kimlik doğrulama.** Amazon Cognito User Pool (public client, Authorization
+Code + PKCE; mobilde secret tutulmaz). API Gateway JWT authorizer token'ı
+doğrular; kullanıcı kimliği **yalnızca** doğrulanmış JWT `sub` claim'inden alınır
+(`x-user-id` header'ına üretimde güvenilmez). Yerel geliştirme/test için
+`AUTH_MODE=dev` header fallback'i vardır.
+
+**Buzdolabı (hane) modeli.** Kullanıcı kayıt olurken Ad-Soyad + önceden
+provision edilmiş bir **buzdolabı ID**'si girer (`ARC-FRIDGE-001..003`, CDK ile
+tohumlanır ve `SeedFridgeIds` çıktısında listelenir). Veri buzdolabı bazında
+partition'lanır (`FRIDGE#{fridge_id}`): aynı dolaba kayıtlı kullanıcılar aynı
+envanteri, alışveriş listesini ve önerileri paylaşır. Profil, cihaz ve tercih
+kullanıcıya özeldir (`USER#{sub}`).
+
+**Yeni veri varlıkları** (tek tablo `fridge-main`): kullanıcı profili, swipe
+aksiyonu (idempotent, `client_action_id`), tazelik değerlendirmesi (sistem
+tahminini ezmez), replacement candidate, alışveriş kalemi, cihaz kaydı ve
+hatırlatma. Tarif veri seti Lambda paketine gömülü sürümlü JSON'dur
+(`core/recipes.json`), skor deterministiktir.
+
 ## API özeti
+
+Tüm `/v1` rotaları JWT ister. Durum değerleri: `PENDING`, `PROCESSING`,
+`COMPLETED`, `FAILED`.
 
 | Metot | Yol | Amaç |
 |---|---|---|
+| `GET` / `PUT` | `/v1/users/me` | Profili okur / oluşturur-günceller (Ad-Soyad + fridge ID doğrulaması) |
+| `PUT` | `/v1/users/me/notification-preferences` | Bildirim tercihlerini günceller |
+| `POST` / `DELETE` | `/v1/devices[/{installation_id}]` | Push cihaz kaydı (gönderim sonraki faz) |
 | `POST` | `/v1/uploads` | Presigned POST ve `upload_id` üretir |
-| `GET` | `/v1/uploads/{upload_id}` | İşlem durumunu, oluşan ürünleri (kutularıyla) ve kaynak fotoğrafın presigned GET URL'sini döndürür |
-| `GET` | `/v1/items` | Aktif envanteri tazelik sırasıyla listeler |
-| `PATCH` | `/v1/items/{item_id}` | Ürün bilgisini veya durumunu düzeltir |
-| `DELETE` | `/v1/items/{item_id}` | Envanter kaydını siler |
-
-Durum değerleri: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`.
+| `GET` | `/v1/uploads/{upload_id}` | İşlem durumunu, ürünleri (kutularıyla) ve kaynak görselin presigned GET URL'sini döndürür |
+| `GET` | `/v1/items` | Aktif envanteri etkin tazelik sırasıyla listeler |
+| `PATCH` / `DELETE` | `/v1/items/{item_id}` | Ürünü düzeltir / siler |
+| `POST` | `/v1/items/{item_id}/actions` | Swipe aksiyonu (tükettim/attım/kontrol), idempotent |
+| `POST` | `/v1/item-actions/{action_id}/undo` | Swipe'ı geri alır |
+| `POST` | `/v1/items/{item_id}/freshness-assessments` | Kullanıcı tazelik değerlendirmesi |
+| `PUT` / `DELETE` | `/v1/items/{item_id}/reminder` | Bireysel hatırlatma (opt-in) |
+| `GET` | `/v1/review-queue` | Kontrol kuyruğu (BR-003/BR-004 önceliğiyle) |
+| `GET` | `/v1/shopping-lists/current` | Alışveriş listesi (aktif + tamamlanan) |
+| `POST`/`PATCH`/`DELETE` | `/v1/shopping-lists/current/items[/{id}]` | Alışveriş kalemi ekle/düzenle/sil |
+| `GET` | `/v1/replacement-candidates` | Bekleyen yeniden alma önerileri |
+| `POST` | `/v1/replacement-candidates/{id}/accept` \| `/dismiss` | Öneriyi listeye ekle / reddet |
+| `GET` | `/v1/recipes/recommendations` | Stok uyumlu deterministik tarif önerileri |
 
 ## Repo yapısı
 

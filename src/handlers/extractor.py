@@ -115,6 +115,7 @@ def _process_one(repo: DynamoRepository, record: dict, upload_id: str) -> None:
     observation = Observation(
         observation_id=new_id("obs"),
         user_id=upload_record.user_id,
+        fridge_id=upload_record.fridge_id,
         upload_id=upload_id,
         captured_at=captured_at,
         source_bucket=record["bucket"],

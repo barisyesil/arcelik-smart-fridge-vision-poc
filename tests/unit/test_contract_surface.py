@@ -28,13 +28,40 @@ EXPECTED_ENV_VARS = {
     "handlers.inventory_api": {"TABLE_NAME"},
 }
 
-#: API Gateway'de rota olarak tanımlanan, dondurulmuş kontrat.
+#: API Gateway'de rota olarak tanımlanan, dondurulmuş kontrat (mobil kapsam).
 FROZEN_ROUTES = {
+    # Profil & kimlik
+    "GET /v1/users/me",
+    "PUT /v1/users/me",
+    "PUT /v1/users/me/notification-preferences",
+    "POST /v1/devices",
+    "DELETE /v1/devices/{installation_id}",
+    # Yükleme
     "POST /v1/uploads",
     "GET /v1/uploads/{upload_id}",
+    # Envanter
     "GET /v1/items",
     "PATCH /v1/items/{item_id}",
     "DELETE /v1/items/{item_id}",
+    "POST /v1/items/{item_id}/actions",
+    "POST /v1/items/{item_id}/freshness-assessments",
+    "PUT /v1/items/{item_id}/reminder",
+    "DELETE /v1/items/{item_id}/reminder",
+    # Aksiyon geri alma
+    "POST /v1/item-actions/{action_id}/undo",
+    # Kontrol kuyruğu
+    "GET /v1/review-queue",
+    # Alışveriş
+    "GET /v1/shopping-lists/current",
+    "POST /v1/shopping-lists/current/items",
+    "PATCH /v1/shopping-lists/current/items/{shopping_item_id}",
+    "DELETE /v1/shopping-lists/current/items/{shopping_item_id}",
+    # Öneriler
+    "GET /v1/replacement-candidates",
+    "POST /v1/replacement-candidates/{candidate_id}/accept",
+    "POST /v1/replacement-candidates/{candidate_id}/dismiss",
+    # Tarifler
+    "GET /v1/recipes/recommendations",
 }
 
 

@@ -18,7 +18,8 @@ import boto3
 from adapters.repository import DynamoRepository
 from core.inventory import UPLOAD_PREFIX, new_id, object_key
 from core.models import UploadRecord, UploadStatus
-from handlers._http import respond, user_id_from
+from handlers._http import respond
+from handlers.context import resolve_context
 
 BUCKET_NAME = os.environ.get("BUCKET_NAME", "")
 TABLE_NAME = os.environ.get("TABLE_NAME", "")
@@ -53,13 +54,13 @@ def _get_repository() -> DynamoRepository:
 
 
 def create_upload(event):  # noqa: ANN001
-    user_id = user_id_from(event)
+    ctx = resolve_context(event, _get_repository())
     upload_id = new_id("upl")
     created_at = datetime.now(UTC)
     # Nesne anahtarı sunucuda üretilir, istemcinin dosya adına güvenilmez.
-    # upload_id anahtarın içine gömülür çünkü S3 olayı extractor'a sadece
-    # bucket/key/etag verir — upload_id'yi geri çıkarmanın tek yolu budur.
-    key = object_key(user_id, upload_id, created_at)
+    # Buzdolabı bazlı prefix: aynı dolabın yüklemeleri birlikte gruplanır ve
+    # extractor upload_id'yi S3 olayından geri çıkarabilir.
+    key = object_key(ctx.fridge_id, upload_id, created_at)
 
     presigned = _get_s3_client().generate_presigned_post(
         Bucket=BUCKET_NAME,
@@ -76,7 +77,8 @@ def create_upload(event):  # noqa: ANN001
     _get_repository().put_upload(
         UploadRecord(
             upload_id=upload_id,
-            user_id=user_id,
+            user_id=ctx.user_id,
+            fridge_id=ctx.fridge_id,
             status=UploadStatus.PENDING,
             created_at=created_at,
             object_key=key,

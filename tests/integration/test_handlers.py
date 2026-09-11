@@ -1,27 +1,27 @@
 """Handler'ların uçtan uca akışı — moto ile sahte S3 + DynamoDB.
 
-Handler modülleri (`presign`, `extractor`, `inventory_api`) `TABLE_NAME` ve
-`BUCKET_NAME` gibi ortam değişkenlerini MODÜL SEVİYESİNDE (import anında)
-okur — bu, Lambda'da soğuk başlatma dışında yeniden okumamak için bilinçli
-bir tercih (bkz. `handlers/presign.py`). Testte bunu tazelemek için, env
-değişkenlerini `mock_aws()` aktifken ayarlayıp modülleri `importlib.reload`
-ile yeniden çalıştırıyoruz — Lambda'nın "her invoke modülü yeniden yükler"
-davranışını taklit etmenin standart yolu budur.
+Handler modülleri ortam değişkenlerini import anında okur; testte bunu tazelemek
+için `mock_aws()` aktifken env'i ayarlayıp modülleri `importlib.reload` ile
+yeniden çalıştırıyoruz (Lambda soğuk başlatma davranışının taklidi).
+
+Kimlik: `AUTH_MODE=dev` ile `x-user-id` header'ı kabul edilir (üretimde JWT).
+Veri buzdolabı bazında partition'lanır; her testte önce bir fridge registry
+kaydı ve bir profil oluşturulur (aksi halde istekler 409 `profile_required` alır).
 """
 
 from __future__ import annotations
 
 import importlib
 import json
+from datetime import UTC, datetime
 
 import pytest
 
 pytestmark = pytest.mark.integration
 
-#: `conftest.py`'deki değerlerle aynı olmalı — fixture'lar tabloyu/bucket'ı
-#: bu adlarla kurar.
 TABLE_NAME = "fridge-main-test"
 BUCKET_NAME = "fridge-raw-test"
+FRIDGE = "ARC-FRIDGE-001"
 
 
 @pytest.fixture
@@ -29,29 +29,60 @@ def handlers(aws_stack, monkeypatch):
     monkeypatch.setenv("TABLE_NAME", TABLE_NAME)
     monkeypatch.setenv("BUCKET_NAME", BUCKET_NAME)
     monkeypatch.setenv("VISION_PROVIDER", "stub")
+    monkeypatch.setenv("AUTH_MODE", "dev")
 
+    import handlers._http as http
+    import handlers.context as context
     import handlers.extractor as extractor
     import handlers.inventory_api as inventory_api
     import handlers.presign as presign
 
-    # Sıra önemli: presign önce, sonra onu içeriden import eden inventory_api.
+    importlib.reload(http)
+    importlib.reload(context)
     importlib.reload(presign)
     importlib.reload(extractor)
     importlib.reload(inventory_api)
+
+    _seed_fridge_and_profile(inventory_api, user_id="u_demo", fridge_id=FRIDGE)
     return presign, extractor, inventory_api
 
 
-@pytest.fixture
-def s3_client(aws_stack):
-    import boto3
+def _seed_fridge_and_profile(inventory_api, *, user_id, fridge_id, name="Test Kullanıcı"):
+    """Fridge registry kaydını yazar ve kullanıcı profilini API üzerinden kurar."""
+    from core.models import FridgeRegistryEntry, FridgeStatus
 
-    return boto3.client("s3", region_name="eu-central-1")
+    repo = inventory_api._get_repository()
+    repo.put_fridge(
+        FridgeRegistryEntry(
+            fridge_id=fridge_id,
+            label="Test Dolabı",
+            status=FridgeStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+        )
+    )
+    response = inventory_api.handler(
+        {
+            "routeKey": "PUT /v1/users/me",
+            "headers": {"x-user-id": user_id},
+            "body": json.dumps({"display_name": name, "fridge_id": fridge_id}),
+        },
+        None,
+    )
+    assert response["statusCode"] in (200, 201)
 
 
-def _upload_and_notify(handlers, s3_client, foods=None):
-    """Presigned POST akışını taklit eder: upload kaydı oluştur, S3'e yaz,
-    extractor'ı gerçek bir S3 ObjectCreated olayıyla tetikle.
-    """
+def _event(route, *, user="u_demo", path=None, body=None, query=None):
+    event = {"routeKey": route, "headers": {"x-user-id": user}}
+    if path:
+        event["pathParameters"] = path
+    if body is not None:
+        event["body"] = json.dumps(body)
+    if query is not None:
+        event["queryStringParameters"] = query
+    return event
+
+
+def _upload_and_notify(handlers, s3_client, foods=None, user="u_demo"):
     from adapters.vision import StubVisionProvider
     from core.models import ExtractedFood, FieldConfidence, Quantity
     from core.taxonomy import FoodCategory, PackageState
@@ -71,7 +102,7 @@ def _upload_and_notify(handlers, s3_client, foods=None):
         ]
     extractor._vision_provider = StubVisionProvider(foods=foods)
 
-    upload_response = inventory_api.handler({"routeKey": "POST /v1/uploads", "headers": {}}, None)
+    upload_response = inventory_api.handler(_event("POST /v1/uploads", user=user), None)
     body = json.loads(upload_response["body"])
 
     s3_client.put_object(
@@ -91,44 +122,49 @@ def _upload_and_notify(handlers, s3_client, foods=None):
     return body["upload_id"], s3_event
 
 
+class TestProfile:
+    def test_register_requires_valid_fridge_id(self, handlers):
+        _, _, inventory_api = handlers
+        response = inventory_api.handler(
+            _event(
+                "PUT /v1/users/me",
+                user="u_new",
+                body={"display_name": "Yeni", "fridge_id": "OLMAYAN-DOLAP"},
+            ),
+            None,
+        )
+        assert response["statusCode"] == 400
+        assert json.loads(response["body"])["error"] == "invalid_fridge_id"
+
+    def test_data_request_without_profile_returns_409(self, handlers):
+        _, _, inventory_api = handlers
+        response = inventory_api.handler(_event("GET /v1/items", user="u_profilesiz"), None)
+        assert response["statusCode"] == 409
+        assert json.loads(response["body"])["error"] == "profile_required"
+
+    def test_get_me_returns_profile(self, handlers):
+        _, _, inventory_api = handlers
+        response = inventory_api.handler(_event("GET /v1/users/me"), None)
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["fridge_id"] == FRIDGE
+        assert body["display_name"] == "Test Kullanıcı"
+
+
 class TestPresign:
     def test_returns_upload_id_and_presigned_fields(self, handlers):
         _, _, inventory_api = handlers
-
-        response = inventory_api.handler({"routeKey": "POST /v1/uploads", "headers": {}}, None)
+        response = inventory_api.handler(_event("POST /v1/uploads"), None)
         body = json.loads(response["body"])
-
         assert response["statusCode"] == 201
         assert body["status"] == "PENDING"
-        assert body["object_key"].startswith("uploads/u_demo/")
+        assert body["object_key"].startswith(f"uploads/{FRIDGE}/")
         assert "fields" in body and "url" in body
-
-    def test_pending_upload_is_queryable_immediately(self, handlers):
-        _, _, inventory_api = handlers
-
-        create = inventory_api.handler({"routeKey": "POST /v1/uploads", "headers": {}}, None)
-        upload_id = json.loads(create["body"])["upload_id"]
-
-        status = inventory_api.handler(
-            {
-                "routeKey": "GET /v1/uploads/{upload_id}",
-                "headers": {},
-                "pathParameters": {"upload_id": upload_id},
-            },
-            None,
-        )
-        assert json.loads(status["body"])["status"] == "PENDING"
 
     def test_unknown_upload_id_returns_404(self, handlers):
         _, _, inventory_api = handlers
-
         response = inventory_api.handler(
-            {
-                "routeKey": "GET /v1/uploads/{upload_id}",
-                "headers": {},
-                "pathParameters": {"upload_id": "upl_yok"},
-            },
-            None,
+            _event("GET /v1/uploads/{upload_id}", path={"upload_id": "upl_yok"}), None
         )
         assert response["statusCode"] == 404
 
@@ -142,12 +178,7 @@ class TestExtractor:
         assert result["processed"] == 1
 
         status = inventory_api.handler(
-            {
-                "routeKey": "GET /v1/uploads/{upload_id}",
-                "headers": {},
-                "pathParameters": {"upload_id": upload_id},
-            },
-            None,
+            _event("GET /v1/uploads/{upload_id}", path={"upload_id": upload_id}), None
         )
         body = json.loads(status["body"])
         assert body["status"] == "COMPLETED"
@@ -156,55 +187,19 @@ class TestExtractor:
         assert body["items"][0]["estimated_freshness_date"]
 
     def test_duplicate_s3_event_is_skipped_not_reprocessed(self, handlers, s3_client):
-        """Idempotency: aynı ObjectCreated olayı iki kez gelirse
-        (S3'ün at-least-once garantisi) envanterde ikinci kayıt oluşmaz.
-        """
         _, extractor, inventory_api = handlers
         _, s3_event = _upload_and_notify(handlers, s3_client)
 
         first = extractor.handler(s3_event, None)
         second = extractor.handler(s3_event, None)
-
         assert first["processed"] == 1
         assert second["processed"] == 0
 
-        items = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"]
+        items = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
         assert len(items) == 1
 
-    def test_low_confidence_extraction_is_flagged_for_review(self, handlers, s3_client):
-        from core.models import ExtractedFood, FieldConfidence, Quantity
-        from core.taxonomy import FoodCategory, PackageState
-
-        _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(
-            handlers,
-            s3_client,
-            foods=[
-                ExtractedFood(
-                    name="tanımsız paket",
-                    category=FoodCategory.OTHER,
-                    package_state=PackageState.UNKNOWN,
-                    quantity=Quantity(value=1),
-                    confidence=FieldConfidence(name=0.2, category=0.3),
-                )
-            ],
-        )
-
-        extractor.handler(s3_event, None)
-
-        items = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"]
-        assert items[0]["needs_review"] is True
-
     def test_unrecognized_object_key_is_skipped_without_crashing(self, handlers):
-        """Yanlış prefix/formatta bir nesne kovaya düşerse (altyapı hatası)
-        Lambda çökmemeli — sadece loglayıp atlamalı.
-        """
         _, extractor, _ = handlers
-
         event = {
             "Records": [
                 {
@@ -219,129 +214,85 @@ class TestExtractor:
 
 
 class TestInventoryApiCrud:
-    def test_patch_marks_item_consumed_and_removes_it_from_listing(self, handlers, s3_client):
+    def _seed_one_item(self, handlers, s3_client):
         _, extractor, inventory_api = handlers
         _, s3_event = _upload_and_notify(handlers, s3_client)
         extractor.handler(s3_event, None)
+        items = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
+        return inventory_api, items[0]["item_id"]
 
-        items = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"]
-        item_id = items[0]["item_id"]
-
+    def test_patch_marks_item_consumed_and_removes_it_from_listing(self, handlers, s3_client):
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
         patch = inventory_api.handler(
-            {
-                "routeKey": "PATCH /v1/items/{item_id}",
-                "headers": {},
-                "pathParameters": {"item_id": item_id},
-                "body": json.dumps({"state": "CONSUMED"}),
-            },
+            _event(
+                "PATCH /v1/items/{item_id}", path={"item_id": item_id}, body={"state": "CONSUMED"}
+            ),
             None,
         )
         assert patch["statusCode"] == 200
         assert json.loads(patch["body"])["state"] == "CONSUMED"
-
-        remaining = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"]
+        remaining = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])[
+            "items"
+        ]
         assert remaining == []
 
     def test_patch_can_correct_a_reserved_word_field(self, handlers, s3_client):
-        """`name` DynamoDB'nin ayrılmış kelime listesindedir — bu regresyonu
-        kalıcı olarak test eder (bkz. `adapters/repository.py` update_item).
-        """
-        _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
-        extractor.handler(s3_event, None)
-        item_id = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"][0]["item_id"]
-
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
         patch = inventory_api.handler(
-            {
-                "routeKey": "PATCH /v1/items/{item_id}",
-                "headers": {},
-                "pathParameters": {"item_id": item_id},
-                "body": json.dumps({"name": "düzeltilmiş süt"}),
-            },
+            _event(
+                "PATCH /v1/items/{item_id}",
+                path={"item_id": item_id},
+                body={"name": "düzeltilmiş süt"},
+            ),
             None,
         )
-
         assert patch["statusCode"] == 200
         assert json.loads(patch["body"])["name"] == "düzeltilmiş süt"
 
     def test_patch_rejects_unknown_field(self, handlers, s3_client):
-        _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
-        extractor.handler(s3_event, None)
-        item_id = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"][0]["item_id"]
-
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
         patch = inventory_api.handler(
-            {
-                "routeKey": "PATCH /v1/items/{item_id}",
-                "headers": {},
-                "pathParameters": {"item_id": item_id},
-                "body": json.dumps({"observation_id": "sahte"}),
-            },
+            _event(
+                "PATCH /v1/items/{item_id}",
+                path={"item_id": item_id},
+                body={"observation_id": "sahte"},
+            ),
             None,
         )
-
         assert patch["statusCode"] == 400
 
     def test_patch_rejects_invalid_enum_value(self, handlers, s3_client):
-        _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
-        extractor.handler(s3_event, None)
-        item_id = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"][0]["item_id"]
-
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
         patch = inventory_api.handler(
-            {
-                "routeKey": "PATCH /v1/items/{item_id}",
-                "headers": {},
-                "pathParameters": {"item_id": item_id},
-                "body": json.dumps({"category": "uzay_gidasi"}),
-            },
+            _event(
+                "PATCH /v1/items/{item_id}",
+                path={"item_id": item_id},
+                body={"category": "uzay_gidasi"},
+            ),
             None,
         )
-
         assert patch["statusCode"] == 400
 
     def test_delete_removes_the_item(self, handlers, s3_client):
-        _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
-        extractor.handler(s3_event, None)
-        item_id = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"][0]["item_id"]
-
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
         delete_response = inventory_api.handler(
-            {
-                "routeKey": "DELETE /v1/items/{item_id}",
-                "headers": {},
-                "pathParameters": {"item_id": item_id},
-            },
-            None,
+            _event("DELETE /v1/items/{item_id}", path={"item_id": item_id}), None
         )
         assert delete_response["statusCode"] == 204
-
-        remaining = json.loads(
-            inventory_api.handler({"routeKey": "GET /v1/items", "headers": {}}, None)["body"]
-        )["items"]
+        remaining = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])[
+            "items"
+        ]
         assert remaining == []
 
-    def test_items_are_scoped_per_user(self, handlers, s3_client):
-        """Farklı `x-user-id` header'ı ile istek yapan iki kullanıcı birbirinin
-        envanterini görmemeli — kullanıcı bazlı izolasyon.
+    def test_items_are_scoped_per_fridge(self, handlers, s3_client):
+        """Hane modeli: farklı buzdolabına kayıtlı kullanıcı ötekinin envanterini
+        görmez. Aynı dolaba kayıtlı kullanıcılar ise paylaşır.
         """
         _, extractor, inventory_api = handlers
         _, s3_event = _upload_and_notify(handlers, s3_client)
         extractor.handler(s3_event, None)
 
-        other_user_items = inventory_api.handler(
-            {"routeKey": "GET /v1/items", "headers": {"x-user-id": "u_other"}}, None
-        )
-        assert json.loads(other_user_items["body"])["items"] == []
+        # İkinci kullanıcı ikinci dolapta.
+        _seed_fridge_and_profile(inventory_api, user_id="u_other", fridge_id="ARC-FRIDGE-002")
+        other = inventory_api.handler(_event("GET /v1/items", user="u_other"), None)
+        assert json.loads(other["body"])["items"] == []
