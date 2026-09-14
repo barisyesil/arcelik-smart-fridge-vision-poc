@@ -371,6 +371,8 @@ class FridgeStack(Stack):
             (M.DELETE, "/v1/devices/{installation_id}"),
             (M.POST, "/v1/uploads"),
             (M.GET, "/v1/uploads/{upload_id}"),
+            (M.POST, "/v1/uploads/{upload_id}/crops"),
+            (M.POST, "/v1/uploads/{upload_id}/confirm"),
             (M.GET, "/v1/items"),
             (M.PATCH, "/v1/items/{item_id}"),
             (M.DELETE, "/v1/items/{item_id}"),
@@ -480,12 +482,16 @@ class FridgeStack(Stack):
         self.table.grant(self.api_function, "dynamodb:TransactWriteItems")
         # PutObject: presigned POST üretimi (yükleme). GetObject: fridge-api,
         # işlem tamamlandığında arayüzün ürünleri bounding box'a göre kırpması
-        # için kaynak fotoğrafın presigned GET URL'sini üretir. İkisi de yalnızca
-        # `uploads/*` önekiyle sınırlı.
+        # için kaynak fotoğrafın presigned GET URL'sini üretir.
+        # `uploads/*`: kaynak fotoğraflar. `crops/*`: kullanıcı onayda her ürünün
+        # kırpılmış görselini buraya yükler (presigned POST) ve envanterde
+        # görüntülemek için presigned GET alır. `crops/*` S3 olay bildirimini
+        # TETİKLEMEZ (bildirim yalnızca `uploads/` prefix'ini dinler), yani crop
+        # yüklemek yeniden çıkarım başlatmaz.
         self.api_function.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["s3:PutObject", "s3:GetObject"],
-                resources=[f"{raw_bucket_arn}/uploads/*"],
+                resources=[f"{raw_bucket_arn}/uploads/*", f"{raw_bucket_arn}/crops/*"],
             )
         )
 

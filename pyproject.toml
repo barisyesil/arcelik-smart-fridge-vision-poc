@@ -9,7 +9,11 @@ requires-python = ">=3.12"
 # Boylece Faz 1'de build/packaging katmani yok.
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "src": core/handlers/adapters importları. ".": repo kökü — `playground`
+# paketi (yerel Prompt Lab) buradan import edilir. Kök olmadan `pytest
+# tests/unit` (CI'daki çağrı; `python -m pytest` değil, CWD'yi eklemez)
+# test_playground.py toplamada `ModuleNotFoundError: playground` verir.
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [

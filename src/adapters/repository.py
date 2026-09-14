@@ -71,6 +71,10 @@ from core.taxonomy import FoodCategory, PackageState
 
 #: Geçici kayıtlar (idempotency kilidi, upload durumu) 7 gün sonra TTL ile silinir.
 _TTL_SECONDS = 7 * 86400
+#: Onaylanmayan DRAFT kalemler 24 saat sonra TTL ile temizlenir; kullanıcı
+#: kontrol ekranını yarım bırakırsa dolap sahte draft'larla dolmasın. Onayda
+#: (ACTIVE'e geçişte) `expires_at` kaldırılır, kalem kalıcı olur.
+_DRAFT_TTL_SECONDS = 24 * 3600
 _DT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -232,6 +236,11 @@ def _serialize_item(item: InventoryItem) -> dict:
         "schema_version": item.schema_version,
     }
     row.update(gsi1_keys(item.fridge_id, item))
+    # DRAFT kalemler onaylanmazsa TTL ile temizlensin. ACTIVE (ve diğer) durumda
+    # `expires_at` YAZILMAZ; put_item tüm satırı değiştirdiği için onaya geçişte
+    # eski expires_at doğal olarak düşer.
+    if item.state is ItemState.DRAFT:
+        row["expires_at"] = int(item.created_at.timestamp()) + _DRAFT_TTL_SECONDS
     return row
 
 
@@ -588,6 +597,7 @@ UPDATABLE_SHOPPING_FIELDS = frozenset({"name", "category", "quantity", "state", 
 
 class InventoryRepository(Protocol):
     def acquire_idempotency_lock(self, bucket: str, key: str, etag: str) -> None: ...
+    def release_idempotency_lock(self, bucket: str, key: str, etag: str) -> None: ...
     def put_upload(self, record: UploadRecord) -> None: ...
     def get_upload(self, upload_id: str) -> UploadRecord | None: ...
     def mark_upload_processing(self, upload_id: str) -> None: ...
@@ -596,6 +606,9 @@ class InventoryRepository(Protocol):
     def list_active_items(self, fridge_id: str, limit: int = 100) -> list[InventoryItem]: ...
     def get_items(self, fridge_id: str, item_ids: list[str]) -> list[InventoryItem]: ...
     def update_item(self, fridge_id: str, item_id: str, changes: dict) -> InventoryItem: ...
+    def confirm_draft_item(
+        self, fridge_id: str, item_id: str, changes: dict, image_ref: str | None
+    ) -> InventoryItem: ...
     def delete_item(self, fridge_id: str, item_id: str) -> None: ...
 
 
@@ -620,6 +633,19 @@ class DynamoRepository:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 raise IdempotencyConflict(f"{bucket}/{key} zaten işlenmiş") from exc
             raise
+
+    def release_idempotency_lock(self, bucket: str, key: str, etag: str) -> None:
+        """Kilidi sil ki BAŞARISIZ bir denemeden sonra AWS retry'ı yeniden işleyebilsin.
+
+        Kilit, aynı S3 nesnesinin iki kez BAŞARIYLA işlenmesini önlemek içindir.
+        Ama başarısız bir denemede kilit kalırsa, Lambda'nın otomatik retry'ı
+        `acquire_idempotency_lock`'ta `IdempotencyConflict` alıp olayı "duplicate"
+        sanarak atlar — böylece ikinci deneme Gemini'ye hiç ulaşmaz ve olay DLQ'ya
+        beklendiği gibi düşmez. Hata yolunda kilidi bırakınca retry temiz bir
+        kilitle yeniden dener; maksimum deneme tükenince olay doğal olarak DLQ'ya
+        gider. Idempotent: kilit yoksa DynamoDB `delete_item` sessizce başarılıdır.
+        """
+        self._table.delete_item(Key=idempotency_key(bucket, key, etag))
 
     def put_upload(self, record: UploadRecord) -> None:
         self._table.put_item(Item=_serialize_upload(record))
@@ -781,6 +807,39 @@ class DynamoRepository:
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_values,
         )
+        return item
+
+    def confirm_draft_item(
+        self, fridge_id: str, item_id: str, changes: dict, image_ref: str | None
+    ) -> InventoryItem:
+        """Bir DRAFT kalemi ACTIVE'e geçirir (kullanıcı onayı).
+
+        `changes` PATCH ile aynı biçimli düzenlemelerdir (name/quantity/... ham
+        değerler). `image_ref` istemcinin yüklediği kalıcı crop nesne anahtarıdır
+        (opsiyonel). Kalem DRAFT değilse `ConflictError` — çift onay ya da yarış
+        durumunda sessizce ACTIVE'i bozma. put_item tüm satırı yeniden yazdığı
+        için `expires_at` (TTL) düşer ve GSI1 (ACTIVE) eklenir.
+        """
+        key = {"PK": fridge_pk(fridge_id), "SK": item_sk(item_id)}
+        current = self._table.get_item(Key=key).get("Item")
+        if current is None:
+            raise ItemNotFound(f"Kalem bulunamadı: {item_id}")
+        if current.get("state") != ItemState.DRAFT.value:
+            raise ConflictError(f"Kalem DRAFT değil, onaylanamaz: {item_id}")
+
+        now_str = _dt_to_str(datetime.now(UTC))
+        merged = {
+            **current,
+            **changes,
+            "state": ItemState.ACTIVE.value,
+            "updated_at": now_str,
+            "version": int(current.get("version", 1)) + 1,
+        }
+        if image_ref is not None:
+            merged["image_ref"] = image_ref
+        item = _deserialize_item(merged)
+        # _serialize_item ACTIVE için expires_at eklemez ve GSI1'i yeniden kurar.
+        self._table.put_item(Item=_serialize_item(item))
         return item
 
     def delete_item(self, fridge_id: str, item_id: str) -> None:

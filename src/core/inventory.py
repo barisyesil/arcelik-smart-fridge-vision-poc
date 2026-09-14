@@ -97,6 +97,10 @@ def client_action_keys(fridge_id: str, client_action_id: str) -> dict[str, str]:
 
 #: S3 olay bildirimi sadece bu prefix'i dinler.
 UPLOAD_PREFIX = "uploads/"
+#: Kalıcı ürün crop'ları bu prefix altında. S3 olay bildirimi YALNIZCA
+#: `uploads/` prefix'ini dinlediği için (bkz. infra), buraya yüklenen crop'lar
+#: extractor'ı TETİKLEMEZ — sonsuz döngü ya da yeniden çıkarım olmaz.
+CROP_PREFIX = "crops/"
 
 
 def object_key(fridge_id: str, upload_id: str, when: datetime) -> str:
@@ -107,6 +111,21 @@ def object_key(fridge_id: str, upload_id: str, when: datetime) -> str:
     olayından geri okur) arasındaki tek bağ budur.
     """
     return f"{UPLOAD_PREFIX}{fridge_id}/{when:%Y-%m-%d}/{upload_id}.jpg"
+
+
+def crop_object_key(fridge_id: str, upload_id: str, crop_id: str) -> str:
+    """Kalıcı ürün crop'u için S3 nesne anahtarı.
+
+    `fridge_id` başta (dolap bazlı IAM/sahiplik kontrolü), sonra `upload_id`
+    (hangi fotoğrafa ait) ve `crop_id` (hangi ürün). Sahiplik doğrulaması için
+    `crop_prefix(fridge_id)` ile başlaması yeterlidir.
+    """
+    return f"{CROP_PREFIX}{fridge_id}/{upload_id}/{crop_id}.jpg"
+
+
+def crop_prefix(fridge_id: str) -> str:
+    """Bir dolabın crop'larının anahtar öneki — sahiplik doğrulamasında kullanılır."""
+    return f"{CROP_PREFIX}{fridge_id}/"
 
 
 def parse_object_key(key: str) -> str | None:
@@ -175,6 +194,10 @@ def build_item(
         created_at=now,
         updated_at=now,
         observation_id=observation_id,
+        # Extraction ürünleri DRAFT yazar: kullanıcı kontrol ekranında
+        # onaylayana kadar envantere girmez (GSI1'e girmediği için
+        # `list_active_items` onları döndürmez). Onay `confirm` endpoint'inde.
+        state=ItemState.DRAFT,
         confidence=food.confidence,
         needs_review=food.confidence.needs_review,
         bounding_box=food.bounding_box,

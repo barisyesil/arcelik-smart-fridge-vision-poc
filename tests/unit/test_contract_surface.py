@@ -39,6 +39,8 @@ FROZEN_ROUTES = {
     # Yükleme
     "POST /v1/uploads",
     "GET /v1/uploads/{upload_id}",
+    "POST /v1/uploads/{upload_id}/crops",
+    "POST /v1/uploads/{upload_id}/confirm",
     # Envanter
     "GET /v1/items",
     "PATCH /v1/items/{item_id}",

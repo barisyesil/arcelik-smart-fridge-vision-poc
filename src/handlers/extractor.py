@@ -168,10 +168,14 @@ def handler(event, context):  # noqa: ANN001
         except VisionError as exc:
             _log("extraction_failed", upload_id=upload_id, error_type=type(exc).__name__)
             repo.mark_upload_failed(upload_id, error_code="VISION_ERROR")
-            raise  # Lambda yeniden dener; 3 başarısızlık sonrası DLQ'ya düşer.
+            # Kilidi bırak: yoksa Lambda'nın retry'ı bu olayı "duplicate" sanıp
+            # atlar, ikinci deneme Gemini'ye ulaşmaz ve DLQ'ya düşmez.
+            repo.release_idempotency_lock(record["bucket"], record["key"], record["etag"])
+            raise  # Lambda yeniden dener; maksimum deneme sonrası DLQ'ya düşer.
         except Exception as exc:  # noqa: BLE001 — hata tipini kaydedip yeniden fırlat
             _log("extraction_failed", upload_id=upload_id, error_type=type(exc).__name__)
             repo.mark_upload_failed(upload_id, error_code=type(exc).__name__)
+            repo.release_idempotency_lock(record["bucket"], record["key"], record["etag"])
             raise
 
     return {"processed": processed}

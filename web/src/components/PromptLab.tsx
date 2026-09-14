@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ExtractResult, LabProduct, PromptVersion } from "../api/playground";
 import { usePromptLab } from "../hooks/usePromptLab";
+import { buildCropStyle, loadImageSize } from "../lib/cropImage";
 import { categoryLabel, formatQuantity, packageStateLabel } from "../lib/labels";
 
 interface PromptLabProps {
@@ -337,6 +338,24 @@ function ResultView({
   result: ExtractResult | null;
   previewUrl: string | null;
 }) {
+  // Kırpma için kaynak görselin doğal boyutu gerekir (kutunun en-boy oranını
+  // doğru kurmak için). previewUrl değişince yeniden ölç. Hook'lar erken
+  // return'den ÖNCE (React kuralı).
+  const [imgSize, setImgSize] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!previewUrl) {
+      setImgSize(null);
+      return;
+    }
+    let alive = true;
+    loadImageSize(previewUrl)
+      .then((s) => alive && setImgSize(s))
+      .catch(() => alive && setImgSize(null));
+    return () => {
+      alive = false;
+    };
+  }, [previewUrl]);
+
   if (!result) {
     return (
       <div className="flex h-full min-h-40 items-center justify-center rounded-xl border border-dashed border-slate-300 text-sm text-slate-400 dark:border-slate-700">
@@ -346,6 +365,10 @@ function ResultView({
   }
 
   const usd = (n: number) => `$${n.toFixed(6)}`;
+  const cropStyleFor = (p: LabProduct): CSSProperties | null =>
+    previewUrl && imgSize && p.bounding_box
+      ? buildCropStyle(previewUrl, p.bounding_box, imgSize.width, imgSize.height)
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -368,16 +391,16 @@ function ResultView({
 
       {previewUrl && <BoxPreview src={previewUrl} products={result.products} />}
 
-      {/* Ürün grupları */}
+      {/* Ürün grupları — her ürün kendi kırpılmış görseliyle */}
       <div className="flex flex-col gap-2">
         <h3 className="text-xs font-medium text-slate-600 dark:text-slate-300">
-          Ürün grupları ({result.products.length})
+          Ürün grupları ({result.products.length}) — kırpılmış görselle
         </h3>
         {result.products.length === 0 && (
           <p className="text-sm text-slate-400">Ürün bulunamadı.</p>
         )}
         {result.products.map((p, i) => (
-          <ProductRow key={i} product={p} />
+          <ProductRow key={i} index={i} product={p} cropStyle={cropStyleFor(p)} />
         ))}
       </div>
 
@@ -410,40 +433,77 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   );
 }
 
-function ProductRow({ product }: { product: LabProduct }) {
+function ProductRow({
+  index,
+  product,
+  cropStyle,
+}: {
+  index: number;
+  product: LabProduct;
+  cropStyle: CSSProperties | null;
+}) {
   const conf = Math.min(product.confidence.name, product.confidence.category);
+  const isEstimate =
+    product.quantity.value_max != null && product.quantity.value_max > product.quantity.value;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900">
-      <span className="font-medium text-slate-900 dark:text-white">{product.name}</span>
-      {product.brand && <span className="text-xs text-slate-400">{product.brand}</span>}
-      <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-        {formatQuantity(product.quantity)}
-        {product.quantity.value_max != null && product.quantity.value_max > product.quantity.value
-          ? " (tahmini)"
-          : ""}
+    <div className="relative flex gap-3 rounded-md border border-slate-200 bg-white p-2 text-sm dark:border-slate-800 dark:bg-slate-900">
+      <span className="absolute -left-1.5 -top-1.5 z-10 grid h-5 w-5 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white dark:bg-white dark:text-slate-900">
+        {index + 1}
       </span>
-      <span className="text-xs text-slate-500">{categoryLabel(product.category)}</span>
-      <span className="text-xs text-slate-400">{packageStateLabel(product.package_state)}</span>
-      <span
-        className={`ml-auto text-xs ${
-          conf < 0.6 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"
-        }`}
-      >
-        güven {(conf * 100).toFixed(0)}%
-      </span>
-      {!product.bounding_box && <span className="text-[10px] text-slate-400">kutu yok</span>}
+      {/* Kırpılmış ürün görseli — çıktıyı görselle eşleştirir. Sabit genişlik,
+          yükseklik `buildCropStyle`'ın verdiği aspectRatio'dan gelir (bozulmaz). */}
+      {cropStyle ? (
+        <div
+          className="w-24 shrink-0 self-start overflow-hidden rounded border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800"
+          style={cropStyle}
+          title={`${product.name} — kırpılmış`}
+        />
+      ) : (
+        <div className="grid aspect-square w-24 shrink-0 self-start place-items-center rounded border border-dashed border-slate-300 text-center text-[9px] text-slate-400 dark:border-slate-700">
+          kutu yok
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="font-medium text-slate-900 dark:text-white">{product.name}</span>
+          {product.brand && <span className="text-xs text-slate-400">{product.brand}</span>}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            {formatQuantity(product.quantity)}
+            {isEstimate ? " (tahmini)" : ""}
+          </span>
+          <span className="text-xs text-slate-500">{categoryLabel(product.category)}</span>
+          <span className="text-xs text-slate-400">
+            {packageStateLabel(product.package_state)}
+          </span>
+          <span
+            className={`text-xs ${
+              conf < 0.6 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"
+            }`}
+          >
+            güven {(conf * 100).toFixed(0)}%
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
 
-/** Görselin üzerine ürün grubu kutularını çizer (0-1000 ölçeği). */
+/** Kaynak görselin üzerine ürün grubu kutularını çizer (0-1000 ölçeği).
+ *
+ * Kutu koordinatları ürün kartlarındaki kırpma ile AYNI 0-1000 tabanını
+ * kullanır; numaralar iki tarafı eşleştirir. Kutu ile ürün kenarı tam
+ * oturmuyorsa bu bir görüntüleme kayması değil, modelin kutu tahminidir —
+ * kartlardaki kırpılmış görsel gerçek sonucu gösterir. */
 function BoxPreview({ src, products }: { src: string; products: LabProduct[] }) {
-  const boxed = products.filter((p) => p.bounding_box);
   return (
     <div className="relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
       <img src={src} alt="yüklenen" className="block w-full" />
-      {boxed.map((p, i) => {
-        const b = p.bounding_box!;
+      {products.map((p, i) => {
+        const b = p.bounding_box;
+        if (!b) return null;
         return (
           <div
             key={i}
@@ -455,8 +515,8 @@ function BoxPreview({ src, products }: { src: string; products: LabProduct[] }) 
               height: `${((b.ymax - b.ymin) / 1000) * 100}%`,
             }}
           >
-            <span className="absolute -top-0.5 left-0 -translate-y-full bg-emerald-500 px-1 text-[10px] text-white">
-              {p.name} · {formatQuantity(p.quantity)}
+            <span className="absolute left-0 top-0 grid h-4 w-4 place-items-center bg-emerald-500 text-[10px] font-semibold text-white">
+              {i + 1}
             </span>
           </div>
         );

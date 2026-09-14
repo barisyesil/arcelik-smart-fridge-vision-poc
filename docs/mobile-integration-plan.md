@@ -1,14 +1,41 @@
 # Mobil (Kotlin) ↔ Cloud Entegrasyon Planı
 
-**Belge sürümü:** 1.0
-**Referans backend sürümü:** `feature/mobile-cloud-architecture` dalı, bu commit
+**Belge sürümü:** 1.2
+**Referans backend sürümü:** `main` dalı, bu commit
 **Referans SRS:** `arcelik-smart-fridge-mobile-srs.md` (Native Android, Kotlin/Compose)
 **Hedef okuyucu:** Mobil (Kotlin) entegrasyonunu yapacak geliştirici/ajan (Codex)
 
-Bu belge, local-first/mock mobil prototipin bu repodaki cloud backend'e
+Bu belge, mock/prototip mobil uygulamanın bu repodaki cloud backend'e
 bağlanması için gereken **her şeyi** tek yerde toplar: kimlik doğrulama,
 buzdolabı (hane) modeli, tüm endpoint'lerin tam sözleşmesi, Kotlin repository
 arayüzü eşlemesi, senkronizasyon/idempotency kuralları ve bilinen sınırlamalar.
+
+> **1.2'de neler değişti (kontrol ekranı + kalıcı crop):**
+> - **Fotoğraf artık otomatik EKLEMEZ; kontrol ekranında onaylanır.** Extraction
+>   ürünleri **DRAFT** durumunda yazar — `GET /v1/items`'te GÖRÜNMEZ, yalnızca
+>   `GET /v1/uploads/{id}` (kontrol ekranı) döner. Kullanıcı seçtiklerini
+>   `POST /v1/uploads/{id}/confirm` ile ACTIVE yapar, reddettikleri silinir.
+>   Onaylanmayan draft'lar 24 saatte TTL ile temizlenir. Bkz. §5.3.1–5.3.2.
+> - **Ürün crop'ları artık cloud'da kalıcı saklanır.** Onay anında istemci her
+>   ürünün kırpılmış görselini `POST /v1/uploads/{id}/crops` ile presigned S3'e
+>   yükler ve confirm'de `image_key` olarak bildirir. Kalem `image_ref` (kalıcı
+>   S3 anahtarı) saklar; okuma endpoint'leri görüntülemek için kısa ömürlü
+>   presigned `image_url` döner. Böylece kullanıcı envanterde ürünün gerçek
+>   fotoğrafını görür (cihazlar/kurulum arası kalıcı). Bkz. §5.3.1, §8.
+>
+> **1.1'de neler değişti (backend güncel mimari):**
+> - **Miktar artık grup + sayım/aralık.** Aynı üründen çok adet ARTIK ayrı ayrı
+>   değil, tek satırda toplanır (10 domates = tek kalem, `quantity.value=10`).
+>   Sayı kesin değilse tahmini aralık gelir: `quantity.value_max` (üst sınır;
+>   `null` ise `value` kesin sayıdır). Bkz. §5.4.1.
+> - **Birim seti genişledi:** `piece, pack, box, bottle, bunch, bag, carton,
+>   gram, milliliter`. Kaynak: `src/core/taxonomy.py` → `QUANTITY_UNITS`.
+> - **`bounding_box` artık ürün GRUBU başına** (tek fiziksel adet başına değil):
+>   bir kalemin tüm adetlerini çevreler. Kırpma o grubu tek görsele kırpar.
+>   Bkz. §8.
+> - Mobil hâlâ **üretim çıkarım promptunu** kullanır (`src/core/extraction.py`).
+>   Web'deki "Prompt Lab" yalnızca yerel bir prompt-mühendisliği aracıdır ve
+>   mobili/üretimi etkilemez — mobil tarafta karşılığı yoktur.
 
 ---
 
@@ -37,10 +64,14 @@ Lambda fridge-extractor  →  Gemini 2.5 Flash  →  DynamoDB (atomik yazım)
   buzdolabı ID'sine kayıtlı birden fazla kullanıcı aynı envanteri, alışveriş
   listesini, kontrol kuyruğunu ve önerileri görür/değiştirir. Profil, cihaz
   kaydı ve bildirim tercihi kullanıcıya özeldir.
-- **Ürün görseli kırpma şu an istemci tarafındadır.** Backend her ürün için
-  Gemini'nin verdiği sınırlayıcı kutuyu (`bounding_box`, 0-1000 normalize)
+- **Ürün görseli kırpma şu an istemci tarafındadır.** Backend her ürün GRUBU
+  için Gemini'nin verdiği sınırlayıcı kutuyu (`bounding_box`, 0-1000 normalize)
   döner + kaynak fotoğrafın kısa ömürlü presigned GET URL'sini verir.
   Kırpmayı (Canvas/Bitmap ile) istemci yapar. Bkz. §8.
+- **Bir kalem = bir ürün grubu.** Fotoğraftaki her farklı ürün ayrı bir
+  `InventoryItem`'dır; aynı üründen çok adet o kalemin `quantity`'sinde sayı
+  ya da aralık olarak taşınır (ayrı kalemlere bölünmez). UI, adedi/aralığı ve
+  birimi bu tek kalem üzerinden göstermelidir. Bkz. §5.4.1.
 - **Push bildirim gönderimi henüz yok.** Cihaz kaydı ve tercih endpoint'leri
   hazır; gerçek FCM/SNS gönderimi sonraki fazdadır. Mobil, günlük özeti şimdilik
   kendi `WorkManager`'ıyla üretmeye devam etmelidir (bkz. §9).
@@ -283,7 +314,7 @@ GET /v1/uploads/{upload_id}             → 200
 {
   "upload_id", "status": "PENDING|PROCESSING|COMPLETED|FAILED",
   "observation_id": string|null,
-  "items": [InventoryItem, ...],        // yalnızca COMPLETED'de dolu
+  "items": [InventoryItem, ...],        // COMPLETED'de DRAFT ürünler (kontrol ekranı)
   "source_image_url": string|null,      // kırpma için presigned GET, ~5dk geçerli
   "error": string|null
 }
@@ -291,6 +322,58 @@ GET /v1/uploads/{upload_id}             → 200
 
 Polling: ~2 sn aralık, ~60 sn timeout (SRS §8.4 — WorkManager ile arka planda
 sürdürülmeli, kullanıcı ekran değiştirebilmeli).
+
+> **ÖNEMLİ:** `COMPLETED`'de dönen `items` artık **DRAFT** durumundadır
+> (`state: "DRAFT"`) ve envantere HENÜZ girmemiştir. Bunlar kontrol ekranında
+> gösterilir; kullanıcı onaylayana kadar `GET /v1/items`'te GÖRÜNMEZ. Onay §5.3.2.
+
+### 5.3.1 Kontrol ekranı: kalıcı crop yükleme
+
+Kontrol ekranında kullanıcı, her DRAFT ürünü kaynak fotoğraftan (bounding box'a
+göre, istemci tarafı — §8) kırpılmış hâliyle görür. Ürünü onaylayacaksa, o
+kırpılmış görsel **kalıcı** olsun diye S3'e yüklenir (böylece kullanıcı envanterde
+ürünün fotoğrafını cihazlar/kurulum arası kalıcı görebilir):
+
+```
+POST /v1/uploads/{upload_id}/crops      → 201
+{ "crop_id", "object_key": "crops/{fridge_id}/{upload_id}/{crop_id}.jpg",
+  "url", "fields": {...} }
+```
+
+`url` + `fields` presigned POST'tur (kaynak yüklemeyle aynı mekanik, §5.3). İstemci
+kırpılmış JPEG'i (uzun kenar ≤1024, q80) `multipart/form-data` ile **doğrudan
+S3'e** POST eder (Authorization header'ı GÖNDERİLMEZ). Dönen `object_key` confirm'de
+`image_key` olarak bildirilir. Bu prefix (`crops/`) S3 olay bildirimini
+TETİKLEMEZ — crop yüklemek yeniden çıkarım başlatmaz. Crop yüklemek isteğe bağlıdır;
+görsel yüklenmeyen ürün de onaylanabilir (fotoğrafsız kalır).
+
+### 5.3.2 Kontrol ekranı: onay (confirm)
+
+```
+POST /v1/uploads/{upload_id}/confirm    → 200
+{
+  "confirmed": [
+    { "item_id": "itm_...",              // ZORUNLU; bu yüklemenin bir DRAFT'ı olmalı
+      "image_key": "crops/...jpg",        // opsiyonel — §5.3.1'den dönen object_key
+      "name"?, "brand"?, "category"?, "subcategory"?, "package_state"?, "quantity"?
+                                          // opsiyonel düzenlemeler (PATCH ile aynı biçim)
+    }
+  ]
+}
+→ 200 { "items": [InventoryItem, ...] }  // artık ACTIVE olan kalemler
+```
+
+Davranış:
+- `confirmed`'daki her item ACTIVE'e geçer; verilen düzenlemeler uygulanır;
+  `image_key` (bu dolabın `crops/` prefix'i altında olmalı) `image_ref` olarak
+  yazılır. Başka dolabın/rastgele bir anahtar sessizce yok sayılır (`image_ref`
+  null kalır).
+- Bu yüklemenin `confirmed`'da OLMAYAN draft'ları **reddedilir (silinir)**.
+- Hatalar: `409 upload_not_ready` (yükleme COMPLETED değil), `409 already_confirmed`
+  (onaylanacak draft kalmadı — tekrar onay), `400 invalid_item` (item_id bu
+  yüklemenin draft'ı değil), `400 invalid_field_value` (geçersiz düzenleme).
+- Onaylanan kalemler `GET /v1/items`'te görünür ve `image_ref` doluysa okuma
+  yanıtlarında görüntüleme için presigned `image_url` taşır (§5.4).
 
 ### 5.4 Envanter
 
@@ -315,7 +398,7 @@ artan sırada döner (backend GSI1 sıralaması — istemci tekrar sıralamamal�
   "category": "dairy",
   "subcategory": "milk_fresh",
   "package_state": "unopened",
-  "quantity": { "value": 1, "unit": "bottle" },
+  "quantity": { "value": 1, "unit": "bottle", "value_max": null },
   "estimated_freshness_date": "2026-09-18",
   "predicted_fresh_until": "2026-09-18",
   "user_adjusted_fresh_until": null,
@@ -323,20 +406,55 @@ artan sırada döner (backend GSI1 sıralaması — istemci tekrar sıralamamal�
   "freshness_basis": "CATEGORY_HEURISTIC",
   "confidence": { "name": 0.92, "category": 0.96 },
   "needs_review": false,
-  "state": "ACTIVE",
+  "state": "DRAFT | ACTIVE | CONSUMED | DISCARDED",
   "bounding_box": { "ymin": 120, "xmin": 60, "ymax": 640, "xmax": 340 },
   "last_reviewed_at": null,
   "next_review_at": null,
   "user_requested_review": false,
-  "image_ref": null,
+  "image_ref": "crops/ARC-FRIDGE-001/upl_.../crop_....jpg" | null,
+  "image_url": "https://...s3...crops/...?X-Amz-...=..." | null,
   "version": 1
 }
 ```
+
+> `state`: `GET /v1/items` yalnızca `ACTIVE` döner; `GET /v1/uploads/{id}` kontrol
+> ekranı için `DRAFT` döner (§5.3). `image_ref` kalemin kalıcı crop'unun S3
+> anahtarıdır (onayda yazılır, §5.3.1); `image_url` onun kısa ömürlü (~5 dk)
+> presigned GET'idir — ürünü görüntülerken bununla göster, KALICI SAKLAMA
+> (süresi dolar; gerekince kalemi yeniden oku). `image_ref` null ise ürünün
+> kalıcı fotoğrafı yok (onayda crop yüklenmemiş).
 
 > `estimated_freshness_date` ve `predicted_fresh_until` **aynı değeri** taşır
 > (ikincisi mobil SRS adlandırmasıyla eşleşsin diye eklendi, birincisi geriye
 > dönük uyumluluk için korunur). Yeni entegrasyonlarda `predicted_fresh_until`
 > + `user_adjusted_fresh_until` + `effective_fresh_until` üçlüsünü kullanın.
+
+#### 5.4.1 Miktar (`quantity`) semantiği — sayı, aralık ve birim
+
+`quantity` bir ürün grubundaki miktarı taşır. Şekli:
+
+```json
+{ "value": 8, "unit": "piece", "value_max": 10 }
+```
+
+- **`value`**: kesin sayı ya da tahmini aralığın ALT sınırı (her zaman ≥ 1).
+- **`value_max`**: tahmini aralığın ÜST sınırı. **`null` ise `value` kesin
+  sayıdır** ("10 tane"). Doluysa aralıktır ("8–10 tane") ve daima
+  `value_max > value` olur.
+- **`unit`** ∈ `piece, pack, box, bottle, bunch, bag, carton, gram, milliliter`
+  (kapalı liste — kaynak: `src/core/taxonomy.py` → `QUANTITY_UNITS`). Model,
+  ürünü en doğal birimle ifade eder; `piece` = tane, `box` = koli, `bunch` =
+  demet, `bag` = torba, `carton` = karton kutu.
+
+**Mobil UI kuralları:**
+- Adedi biçimlendirirken `value_max` doluysa aralık göster ("8–10"), değilse
+  tek sayı ("10"); ardından birimin Türkçe karşılığını ekle. Web referansı:
+  `web/src/lib/labels.ts` → `formatQuantity` / `QUANTITY_UNIT_LABELS`.
+- Birim etiketleri kapalı listedir; **yeni birim uydurma**. Bilinmeyen bir
+  birim gelirse ham anahtarı göster (ileride backend listeye ekleyebilir).
+- Kullanıcı `PATCH /v1/items/{id}` ile `quantity`'yi düzeltebilir; düzeltmede
+  `value`, `unit` ve (isteğe bağlı) `value_max` gönderilebilir. `value_max`
+  gönderilmezse/`null` ise kalem kesin sayıya döner.
 
 ### 5.5 Swipe aksiyonları
 
@@ -449,7 +567,7 @@ DELETE /v1/shopping-lists/current/items/{id}                          → 204
   "name": "domates",
   "state": "ACTIVE" | "COMPLETED" | "REMOVED",
   "category": "produce_vegetable" | null,
-  "quantity": { "value": 3, "unit": "piece" } | null,
+  "quantity": { "value": 3, "unit": "piece", "value_max": null } | null,
   "source_candidate_id": "cand_..." | null,
   "note": "..." | null,
   "created_at": "...", "updated_at": "..."
@@ -516,16 +634,31 @@ bağlanır:
 | `RecipeRepository` | `RemoteRecipeRepository` → `GET /v1/recipes/recommendations` (yerel `JsonRecipeRepository` yerine; istenirse ikisi birlikte tutulup çevrimdışı fallback yapılabilir) |
 | `UserPreferencesRepository` | Profil kısmı `ApiUserRepository` → `GET/PUT /v1/users/me`, `PUT /v1/users/me/notification-preferences`; local UI tercihleri (tema, grid/liste) yine `DataStore`'da kalır |
 | `ReminderScheduler` | `CloudAwareReminderScheduler` → `PUT/DELETE /v1/items/{id}/reminder` + yerel `WorkManager` (push gelene kadar birincil mekanizma) |
-| `ProductAnalyzer` | Doğrudan endpoint değil — `POST /v1/uploads` + presigned S3 + `GET /v1/uploads/{id}` polling üçlüsünün sarmalayıcısı |
+| `ProductAnalyzer` | Doğrudan endpoint değil — `POST /v1/uploads` + presigned S3 + `GET /v1/uploads/{id}` polling üçlüsünün sarmalayıcısı; sonuç DRAFT ürünlerdir |
+| Kontrol/onay (yeni) | `POST /v1/uploads/{id}/crops` (crop yükle) + `POST /v1/uploads/{id}/confirm` (onayla/reddet). Uygun bir arayüz yoksa `ApiInventoryRepository`'ye `confirmUpload(...)` olarak eklenebilir |
 | `SyncOutboxRepository` | `ApiSyncOutboxProcessor` → outbox'taki her olay tipini ilgili endpoint'e çevirir (bkz. §7) |
 
-`AwsVisionProductAnalyzer` önerilen akış:
+`AwsVisionProductAnalyzer` önerilen akış (analiz DRAFT'ları üretir; onay ayrı bir
+kullanıcı adımıdır — kontrol ekranında):
 
 ```kotlin
 suspend fun analyze(imageUri: Uri): UploadResult {
     val presign = api.createUpload()                       // POST /v1/uploads
     s3Client.uploadMultipart(presign.url, presign.fields, imageFile)
-    return pollUntilTerminal(presign.uploadId)              // GET /v1/uploads/{id}, ~2sn/60sn
+    return pollUntilTerminal(presign.uploadId)              // GET /v1/uploads/{id}, DRAFT ürünler
+}
+
+// Kontrol ekranında kullanıcı onaylayınca:
+suspend fun confirm(uploadId: String, decisions: List<DraftDecision>) {
+    val confirmed = decisions.filter { it.keep }.map { d ->
+        val cropKey = d.croppedJpeg?.let { jpeg ->
+            val t = api.createCropUpload(uploadId)          // POST /v1/uploads/{id}/crops
+            s3Client.uploadMultipart(t.url, t.fields, jpeg) // doğrudan S3
+            t.objectKey
+        }
+        ConfirmItem(itemId = d.itemId, imageKey = cropKey, edits = d.edits)
+    }
+    api.confirmUpload(uploadId, confirmed)                  // POST /v1/uploads/{id}/confirm
 }
 ```
 
@@ -553,9 +686,12 @@ akışına yönlendir (outbox'ı boşaltma, kayıt tamamlanınca yeniden dene).
 
 ## 8. Ürün görseli kırpma (bounding box)
 
-Backend kırpma yapmaz; `bounding_box` (varsa) + `source_image_url` döner.
-Web referans implementasyonu **CSS arka plan kırpması** kullanır (canvas/CORS
-gerektirmez) — Kotlin tarafında en yakın karşılık:
+Backend kırpma yapmaz; her ürün GRUBU için `bounding_box` (varsa) +
+`source_image_url` döner. Kutu artık tek fiziksel adedi değil, o kalemin tüm
+adetlerini kapsayan grubu çevreler; kırpma o grubu tek bir görsele kırpar
+(örn. "8–10 domates" için tek kırpılmış görsel). Web referans implementasyonu
+**CSS arka plan kırpması** kullanır (canvas/CORS gerektirmez) — Kotlin tarafında
+en yakın karşılık:
 
 ```kotlin
 fun cropBox(source: Bitmap, box: BoundingBox): Bitmap {
@@ -567,16 +703,26 @@ fun cropBox(source: Bitmap, box: BoundingBox): Bitmap {
 }
 ```
 
-`source_image_url` yalnızca ~5 dakika geçerlidir (`GET /v1/uploads/{id}`
-her çağrıldığında yeniden üretilir) — kırpılmış sonucu kalıcı olarak
-saklamak isterseniz indirip yerel dosyaya/`image_ref` alanına yazın; URL'yi
-kalıcı referans olarak SAKLAMAYIN.
+`source_image_url` yalnızca ~5 dakika geçerlidir (`GET /v1/uploads/{id}` her
+çağrıldığında yeniden üretilir) — kalıcı referans olarak SAKLAMAYIN.
 
-> Sonraki fazda kırpma buluta taşınacak (Lambda + Pillow + S3 `crops/` +
-> kalıcı presigned URL) — o noktada mobil yalnızca hazır bir `crop_url`
-> alanı kullanacak, bu bölümdeki istemci-taraflı kırpma kodu kaldırılabilir.
-> Bu geçiş **API'de kırıcı değişiklik gerektirmeyecek** şekilde tasarlandı
-> (yeni alan eklenir, mevcut alanlar kalır).
+**Crop artık kalıcı olarak buluta yüklenir (kontrol ekranı akışı).** İki aşama:
+
+1. **Kontrol ekranında (DRAFT, henüz onay yok):** yukarıdaki istemci-taraflı
+   kırpma yalnızca ÖNİZLEME içindir — kullanıcı ürünün kırpılmış hâlini görüp
+   onaylar/reddeder. Kaynak `source_image_url`'den okunur.
+2. **Onayda (§5.3.1):** onaylanan her ürünün kırpılmış JPEG'i `POST
+   /v1/uploads/{id}/crops` ile presigned S3'e yüklenir; dönen `object_key`
+   confirm'de `image_key` olur ve kaleme kalıcı `image_ref` olarak yazılır.
+   Bundan sonra envanterde ürünü görüntülerken kaynak fotoğrafa gerek yoktur:
+   kalem doğrudan kendi kalıcı `image_url`'ünü (presigned GET, ~5 dk) taşır —
+   URL'yi değil, gerektiğinde kalemi yeniden okuyup taze URL alın.
+
+> Bu, "sunucu tarafı Pillow kırpma" yerine bilinçli olarak seçilen **istemci
+> yükleme** yaklaşımıdır: mevcut presigned altyapısını kullanır, yeni Lambda/
+> layer gerektirmez. İleride sunucu tarafı kırpmaya geçilirse `image_ref`/
+> `image_url` sözleşmesi aynı kalır (yalnızca crop'u kimin ürettiği değişir),
+> yani mobilde kırıcı değişiklik olmaz.
 
 ---
 
@@ -616,6 +762,11 @@ kalıcı referans olarak SAKLAMAYIN.
       tarif hiç listelenmiyor, skorlanıp gösterilmiyor).
 - [ ] Token süresi dolduğunda sessiz tazeleme çalışıyor; refresh de
       başarısızsa kullanıcı nazikçe yeniden girişe yönlendiriliyor.
+- [ ] Kontrol ekranı: fotoğraf sonrası DRAFT'lar gösteriliyor; kullanıcı
+      seçip düzenleyip onaylıyor; onaylananlar ACTIVE olup envanterde beliriyor,
+      reddedilenler görünmüyor; onaysız çıkış envantere ürün EKLEMİYOR (§5.3.2).
+- [ ] Onaylanan üründe crop yükleniyor ve envanterde ürünün fotoğrafı (`image_url`)
+      gösteriliyor; crop yüklenemezse ürün fotoğrafsız da onaylanabiliyor (§5.3.1).
 - [ ] APK/AAB'de secret taraması temiz (SRS NFR-SEC-001, 20.5).
 
 ---
@@ -623,7 +774,8 @@ kalıcı referans olarak SAKLAMAYIN.
 ## 11. Bilinen sınırlamalar (bu fazda kapsam dışı)
 
 - Gerçek push bildirim gönderimi (§9).
-- Sunucu tarafı ürün görseli kırpma/kalıcı thumbnail (§8).
+- Sunucu tarafı Pillow kırpma — bilinçli olarak SEÇİLMEDİ; crop'lar istemci
+  tarafından üretilip onayda yüklenir (§8). Kalıcı thumbnail bu sayede VAR.
 - Çoklu cihaz çakışma politikası (SRS §24.10) — şu an son yazan kazanır.
 - Kullanıcı geri bildiriminin global raf ömrü kurallarına otomatik yansıması
   — BR-009 gereği bilinçli olarak yok; ayrı bir analiz/onay süreci gerekir.

@@ -3,27 +3,31 @@
 # Kullanım (repo kökünden):
 #   .\playground\run.ps1
 #
-# GEMINI_API_KEY'i şu sırayla arar: mevcut ortam değişkeni -> repo kökündeki
-# .env dosyası. Anahtar yalnızca sunucu ortamında kalır; tarayıcıya gitmez.
+# GEMINI_API_KEY'i mevcut ortam değişkeninden ya da repo kökündeki .env /
+# .env.local dosyasından bulur — asıl yükleme `playground/__init__.py` içinde
+# olur (paket import edilir edilmez çalışır), bu yüzden `uvicorn
+# playground.server:app` DOĞRUDAN çalıştırılsa bile anahtar bulunur. Bu script
+# yalnızca kolaylık + erken uyarı sağlar. Anahtar yalnızca sunucu ortamında
+# kalır; tarayıcıya gitmez.
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
-# .env varsa GEMINI_API_KEY'i oku (yalnızca ortamda yoksa).
-if (-not $env:GEMINI_API_KEY) {
-    $envFile = Join-Path $repoRoot ".env"
-    if (Test-Path $envFile) {
-        foreach ($line in Get-Content $envFile) {
-            if ($line -match '^\s*GEMINI_API_KEY\s*=\s*(.+)\s*$') {
-                $env:GEMINI_API_KEY = $matches[1].Trim().Trim('"')
-            }
+$hasKey = [bool]$env:GEMINI_API_KEY
+if (-not $hasKey) {
+    foreach ($name in @(".env", ".env.local")) {
+        $envFile = Join-Path $repoRoot $name
+        if ((Test-Path $envFile) -and (Select-String -Path $envFile -Pattern '^\s*GEMINI_API_KEY\s*=' -Quiet)) {
+            $hasKey = $true
         }
     }
 }
 
-if (-not $env:GEMINI_API_KEY) {
-    Write-Warning "GEMINI_API_KEY ayarlı degil. Sunucu acilir ama /extract 503 doner."
-    Write-Warning "Anahtari .env'e ekleyin ya da: `$env:GEMINI_API_KEY='...'"
+if (-not $hasKey) {
+    Write-Warning "GEMINI_API_KEY hicbir yerde bulunamadi (ortam degiskeni, .env, .env.local)."
+    Write-Warning "Repo KOKUNDE (web/ ALTINDA DEGIL) .env ya da .env.local dosyasina ekleyin:"
+    Write-Warning '  GEMINI_API_KEY="..."'
+    Write-Warning "Sunucu yine de acilir ama /playground/extract 503 doner."
 }
 
 Push-Location $repoRoot

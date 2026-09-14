@@ -39,8 +39,17 @@ class FreshnessBasis(StrEnum):
 
 
 class ItemState(StrEnum):
-    """ACTIVE dışına çıkan kalem GSI1'den düşer (sparse index)."""
+    """ACTIVE dışına çıkan kalem GSI1'den düşer (sparse index).
 
+    DRAFT: extraction'ın ürettiği ama kullanıcının HENÜZ onaylamadığı kalem.
+    Envanterde (`GET /v1/items`) görünmez; yalnızca upload-status kontrol
+    ekranına döner. Kullanıcı onaylayınca (`POST /v1/uploads/{id}/confirm`)
+    ACTIVE'e geçer, reddedilirse silinir. Onaylanmayan draft'lar TTL ile
+    otomatik temizlenir. Böylece "fotoğraf = otomatik ekleme" değil, "fotoğraf
+    = onaya sun" olur.
+    """
+
+    DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"
     CONSUMED = "CONSUMED"
     DISCARDED = "DISCARDED"

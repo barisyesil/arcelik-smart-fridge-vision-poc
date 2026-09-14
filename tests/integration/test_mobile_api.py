@@ -109,6 +109,17 @@ def _seed_item(api, s3_client, days=2):
         },
         None,
     )
+    # Extraction DRAFT üretir; envantere girmesi için kontrol ekranı onayı gerekir.
+    upload_id = body["upload_id"]
+    status = json.loads(
+        _call(inventory_api, "GET /v1/uploads/{upload_id}", path={"upload_id": upload_id})["body"]
+    )
+    _call(
+        inventory_api,
+        "POST /v1/uploads/{upload_id}/confirm",
+        path={"upload_id": upload_id},
+        body={"confirmed": [{"item_id": it["item_id"]} for it in status["items"]]},
+    )
     items = json.loads(_call(inventory_api, "GET /v1/items").get("body"))["items"]
     return items[0]["item_id"]
 

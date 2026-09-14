@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from core.inventory import (
@@ -69,6 +70,21 @@ def test_idempotency_key_changes_with_etag():
     assert first["SK"] == "LOCK"
 
 
+def test_build_item_produces_draft_not_active():
+    """Extraction ürünleri DRAFT'tır — kullanıcı onaylayana kadar envantere girmez."""
+    item, _ = build_item(
+        _food(),
+        fridge_id=FRIDGE,
+        user_id="u_demo",
+        observation_id="obs_1",
+        captured_at=NOW,
+        now=NOW,
+    )
+    assert item.state is ItemState.DRAFT
+    # DRAFT kalem GSI1'e girmez (sparse index), yani list_active onu döndürmez.
+    assert gsi1_keys(FRIDGE, item) == {}
+
+
 def test_active_item_gets_gsi1_keys_sorted_by_freshness_date():
     item, _ = build_item(
         _food(),
@@ -78,6 +94,8 @@ def test_active_item_gets_gsi1_keys_sorted_by_freshness_date():
         captured_at=NOW,
         now=NOW,
     )
+    # Onaylanınca (ACTIVE) GSI1'e girer ve etkin tazelik tarihine göre sıralanır.
+    item = replace(item, state=ItemState.ACTIVE)
     keys = gsi1_keys(FRIDGE, item)
     assert keys["GSI1PK"] == f"FRIDGE#{FRIDGE}#ACTIVE"
     assert keys["GSI1SK"].startswith("FRESH#2026-03-31#")

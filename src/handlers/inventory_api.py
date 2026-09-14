@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 
 import boto3
@@ -26,7 +27,7 @@ from adapters.repository import (
     RepositoryError,
 )
 from core.actions import build_replacement_candidate, build_swipe_action, resulting_item_state
-from core.inventory import new_id
+from core.inventory import crop_object_key, crop_prefix, new_id
 from core.models import (
     DeviceRegistration,
     DiscardReason,
@@ -58,7 +59,7 @@ from handlers._http import (
     route_key,
 )
 from handlers.context import ContextError, require_user, resolve_context
-from handlers.presign import create_upload
+from handlers.presign import PRESIGN_CONDITIONS, PRESIGN_EXPIRY_S, create_upload
 
 logger = logging.getLogger()
 
@@ -81,6 +82,10 @@ ROUTES = (
     # Yükleme
     "POST /v1/uploads",
     "GET /v1/uploads/{upload_id}",
+    # Kalıcı crop yükleme (istemci onayda her ürünün kırpılmış görselini yükler)
+    "POST /v1/uploads/{upload_id}/crops",
+    # Kontrol ekranı onayı: DRAFT ürünleri ACTIVE'e geçir / reddet
+    "POST /v1/uploads/{upload_id}/confirm",
     # Envanter
     "GET /v1/items",
     "PATCH /v1/items/{item_id}",
@@ -151,12 +156,36 @@ def _query_params(event: dict) -> dict[str, str]:
 
 
 def _parse_quantity(raw: object) -> Quantity | None:
+    """İstemciden gelen miktarı güvene al: `value`, `unit` ve opsiyonel `value_max`.
+
+    `value_max` (tahmini aralık üst sınırı) sonradan eklendi; buradan geçmeyen
+    her yol onu düşürürdü (örn. "8-10 tane" tekrar kaydedilince üst sınır
+    kaybolurdu). Geçersiz/aralık olmayan `value_max` sessizce `None` olur.
+    """
     if not isinstance(raw, dict) or "value" not in raw:
         return None
     try:
-        return Quantity(value=max(0, int(raw["value"])), unit=raw.get("unit", "piece"))
+        value = max(0, int(raw["value"]))
     except (TypeError, ValueError):
         return None
+    value_max = _parse_value_max(raw.get("value_max"), value)
+    return Quantity(value=value, unit=raw.get("unit", "piece"), value_max=value_max)
+
+
+def _parse_value_max(raw: object, value: int) -> int | None:
+    """Aralık üst sınırını güvene al: yoksa/geçersizse/`value`'dan büyük değilse None.
+
+    `core.extraction._parse_value_max` ile aynı kural — tek sayı ile gerçek
+    aralık ayrımı her iki giriş kapısında (Gemini çıktısı ve kullanıcı düzeltmesi)
+    tutarlı olsun diye.
+    """
+    if raw is None:
+        return None
+    try:
+        candidate = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return candidate if candidate > value else None
 
 
 # --- Kaynak görsel (bbox kırpma için presigned GET) ---
@@ -174,6 +203,21 @@ def _source_image_url(object_key: str) -> str | None:
     except Exception:  # noqa: BLE001
         logger.warning('{"event": "source_image_presign_failed"}')
         return None
+
+
+def _item_json(item) -> dict:  # noqa: ANN001
+    """Kalemi DTO'ya çevirir ve kalıcı crop'u varsa görüntülemek için kısa ömürlü
+    presigned `image_url` ekler.
+
+    `image_ref` S3 nesne anahtarıdır (kalıcı); `image_url` onun presigned GET'idir
+    (~5 dk). İstemci ürünü görüntülerken bu URL ile crop'u gösterir; URL'yi kalıcı
+    saklamaz (süresi dolar), gerekirse kalemi yeniden okur. presign yerel imza
+    işlemidir (AWS'e çağrı yok), o yüzden liste başına 100 kalemde bile ucuzdur.
+    """
+    data = dto.item_to_json(item)
+    if data.get("image_ref"):
+        data["image_url"] = _source_image_url(data["image_ref"])
+    return data
 
 
 # --- Profil & kimlik ---
@@ -279,7 +323,7 @@ def _get_upload_status(event: dict) -> dict:
     source_image_url = None
     if record.status is UploadStatus.COMPLETED and record.item_ids:
         found = _get_repository().get_items(ctx.fridge_id, list(record.item_ids))
-        items = [dto.item_to_json(item) for item in found]
+        items = [_item_json(item) for item in found]
         if any(item["bounding_box"] for item in items):
             source_image_url = _source_image_url(record.object_key)
 
@@ -294,6 +338,110 @@ def _get_upload_status(event: dict) -> dict:
             "error": record.error_code,
         },
     )
+
+
+# --- Kalıcı crop yükleme + kontrol ekranı onayı ---
+
+#: Onayda kullanıcı düzeltebileceği alanlar (state hariç PATCH ile aynı set).
+_CONFIRM_EDIT_FIELDS = ("name", "brand", "category", "subcategory", "package_state", "quantity")
+
+
+def _create_crop_upload(event: dict) -> dict:
+    """İstemcinin kırpılmış ürün görselini S3'e (crops/ prefix) yüklemesi için
+    presigned POST üretir. Bu prefix S3 olay bildirimini TETİKLEMEZ (yalnızca
+    uploads/ dinlenir), yani crop yüklemek yeniden çıkarım başlatmaz."""
+    ctx = resolve_context(event, _get_repository())
+    upload_id = path_param(event, "upload_id")
+    record = _get_repository().get_upload(upload_id)
+    if record is None or record.fridge_id != ctx.fridge_id:
+        return respond(404, {"error": "upload_not_found", "upload_id": upload_id})
+
+    crop_id = new_id("crop")
+    key = crop_object_key(ctx.fridge_id, upload_id, crop_id)
+    presigned = _get_s3_client().generate_presigned_post(
+        Bucket=BUCKET_NAME,
+        Key=key,
+        Conditions=list(PRESIGN_CONDITIONS),
+        ExpiresIn=PRESIGN_EXPIRY_S,
+    )
+    return respond(
+        201,
+        {
+            "crop_id": crop_id,
+            "object_key": key,
+            "url": presigned["url"],
+            "fields": presigned["fields"],
+        },
+    )
+
+
+def _validate_crop_key(image_key: object, fridge_id: str) -> str | None:
+    """İstemcinin verdiği crop anahtarını SAHİPLİK için doğrula.
+
+    Yalnızca bu dolabın crop prefix'i (`crops/{fridge_id}/`) altındaki bir anahtar
+    kabul edilir — başka dolabın ya da rastgele bir anahtarın item'a yazılmasını
+    engeller. Geçersizse `None` (crop'suz onay geçerli bir durumdur)."""
+    if not isinstance(image_key, str) or not image_key:
+        return None
+    return image_key if image_key.startswith(crop_prefix(fridge_id)) else None
+
+
+def _confirm_upload(event: dict) -> dict:
+    """Kontrol ekranı onayı: seçili DRAFT ürünleri ACTIVE'e geçirir, kalanları siler.
+
+    `confirmed` listesindeki her öğe bir DRAFT item_id'sidir; opsiyonel düzenlemeler
+    (name/quantity/...) ve `image_key` (istemcinin yüklediği kalıcı crop) taşıyabilir.
+    Bu upload'ın `confirmed`'da OLMAYAN draft'ları reddedilir (silinir). Böylece
+    'fotoğraf = otomatik ekle' yerine 'kullanıcı onaylayınca ekle' olur."""
+    ctx = resolve_context(event, _get_repository())
+    upload_id = path_param(event, "upload_id")
+    repo = _get_repository()
+    record = repo.get_upload(upload_id)
+    if record is None or record.fridge_id != ctx.fridge_id:
+        return respond(404, {"error": "upload_not_found", "upload_id": upload_id})
+    if record.status is not UploadStatus.COMPLETED or not record.item_ids:
+        return respond(409, {"error": "upload_not_ready"})
+
+    existing = repo.get_items(ctx.fridge_id, list(record.item_ids))
+    draft_ids = {i.item_id for i in existing if i.state is ItemState.DRAFT}
+    if not draft_ids:
+        return respond(409, {"error": "already_confirmed"})
+
+    body = json_body(event)
+    confirmed = body.get("confirmed")
+    if not isinstance(confirmed, list):
+        return respond(400, {"error": "invalid_field_value", "detail": "confirmed listesi gerekli"})
+
+    active_items = []
+    confirmed_ids: set[str] = set()
+    for entry in confirmed:
+        if not isinstance(entry, dict):
+            return respond(400, {"error": "invalid_field_value", "detail": "confirmed öğesi obje"})
+        item_id = entry.get("item_id")
+        if item_id not in draft_ids:
+            return respond(400, {"error": "invalid_item", "item_id": item_id})
+        if item_id in confirmed_ids:
+            continue
+        changes = {k: entry[k] for k in _CONFIRM_EDIT_FIELDS if k in entry}
+        validation_error = _validate_patch_changes(changes)
+        if validation_error:
+            return respond(400, {"error": "invalid_field_value", "detail": validation_error})
+        if "quantity" in changes:
+            changes["quantity"] = asdict(_parse_quantity(changes["quantity"]))
+        image_ref = _validate_crop_key(entry.get("image_key"), ctx.fridge_id)
+        try:
+            item = repo.confirm_draft_item(ctx.fridge_id, item_id, changes, image_ref)
+        except ConflictError:
+            return respond(409, {"error": "already_confirmed", "item_id": item_id})
+        except ItemNotFound:
+            return respond(404, {"error": "item_not_found", "item_id": item_id})
+        active_items.append(item)
+        confirmed_ids.add(item_id)
+
+    for item_id in draft_ids - confirmed_ids:
+        repo.delete_item(ctx.fridge_id, item_id)
+
+    return respond(200, {"items": [_item_json(item) for item in active_items]})
 
 
 # --- Envanter CRUD ---
@@ -323,13 +471,15 @@ def _validate_patch_changes(changes: dict) -> str | None:
         q = changes["quantity"]
         if not isinstance(q, dict) or "value" not in q or "unit" not in q:
             return "quantity {value, unit} biçimine uymuyor"
+        if _parse_quantity(q) is None:
+            return "quantity değeri geçersiz"
     return None
 
 
 def _list_items(event: dict) -> dict:
     ctx = resolve_context(event, _get_repository())
     items = _get_repository().list_active_items(ctx.fridge_id)
-    return respond(200, {"items": [dto.item_to_json(item) for item in items]})
+    return respond(200, {"items": [_item_json(item) for item in items]})
 
 
 def _patch_item(event: dict) -> dict:
@@ -342,13 +492,18 @@ def _patch_item(event: dict) -> dict:
     validation_error = _validate_patch_changes(changes)
     if validation_error:
         return respond(400, {"error": "invalid_field_value", "detail": validation_error})
+    # Miktarı kanonik biçime indir: `value_max` korunur ve güvene alınır, ham
+    # doğrulanmamış dict depoya yazılmaz (bozuk `value_max` okuma anında 500'e
+    # yol açardı).
+    if "quantity" in changes:
+        changes["quantity"] = asdict(_parse_quantity(changes["quantity"]))
     try:
         item = _get_repository().update_item(ctx.fridge_id, item_id, changes)
     except ItemNotFound:
         return respond(404, {"error": "item_not_found", "item_id": item_id})
     except RepositoryError as exc:
         return respond(400, {"error": "invalid_update", "detail": str(exc)})
-    return respond(200, dto.item_to_json(item))
+    return respond(200, _item_json(item))
 
 
 def _delete_item(event: dict) -> dict:
@@ -409,7 +564,7 @@ def _post_action(event: dict) -> dict:
         {
             "action": dto.action_to_json(saved_action),
             "candidate": dto.candidate_to_json(saved_candidate) if saved_candidate else None,
-            "item": dto.item_to_json(saved_item),
+            "item": _item_json(saved_item),
         },
     )
 
@@ -480,7 +635,7 @@ def _post_assessment(event: dict) -> dict:
         201,
         {
             "assessment": dto.assessment_to_json(saved_assessment),
-            "item": dto.item_to_json(saved_item),
+            "item": _item_json(saved_item),
         },
     )
 
@@ -498,7 +653,7 @@ def _get_review_queue(event: dict) -> dict:
         200,
         {
             "queue": [
-                {**dto.review_entry_to_json(e), "item": dto.item_to_json(by_id[e.item_id])}
+                {**dto.review_entry_to_json(e), "item": _item_json(by_id[e.item_id])}
                 for e in entries
             ],
             "total_pending": len(entries),
@@ -594,6 +749,13 @@ def _patch_shopping(event: dict) -> dict:
             FoodCategory(changes["category"])
         except ValueError:
             return respond(400, {"error": "invalid_field_value", "detail": "category"})
+    # Miktar verildiyse kanonik biçime indir (`value_max` korunur). `null`
+    # gönderilmesi miktarı temizler; bu yola dokunma.
+    if changes.get("quantity") is not None:
+        parsed = _parse_quantity(changes["quantity"])
+        if parsed is None:
+            return respond(400, {"error": "invalid_field_value", "detail": "quantity"})
+        changes["quantity"] = asdict(parsed)
     try:
         item = _get_repository().update_shopping(ctx.fridge_id, shopping_item_id, changes)
     except ItemNotFound:
@@ -695,6 +857,8 @@ _HANDLERS = {
     "DELETE /v1/devices/{installation_id}": _delete_device,
     "POST /v1/uploads": create_upload,
     "GET /v1/uploads/{upload_id}": _get_upload_status,
+    "POST /v1/uploads/{upload_id}/crops": _create_crop_upload,
+    "POST /v1/uploads/{upload_id}/confirm": _confirm_upload,
     "GET /v1/items": _list_items,
     "PATCH /v1/items/{item_id}": _patch_item,
     "DELETE /v1/items/{item_id}": _delete_item,

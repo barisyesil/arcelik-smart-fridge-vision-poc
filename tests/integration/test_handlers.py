@@ -122,6 +122,33 @@ def _upload_and_notify(handlers, s3_client, foods=None, user="u_demo"):
     return body["upload_id"], s3_event
 
 
+def _draft_items(inventory_api, upload_id, user="u_demo"):
+    """Upload-status'tan (kontrol ekranı) bu yüklemenin DRAFT ürünlerini alır."""
+    status = inventory_api.handler(
+        _event("GET /v1/uploads/{upload_id}", path={"upload_id": upload_id}, user=user), None
+    )
+    return json.loads(status["body"])["items"]
+
+
+def _confirm_drafts(inventory_api, upload_id, confirmed=None, user="u_demo"):
+    """Kontrol ekranı onayını simüle eder. `confirmed` verilmezse tüm draft'lar
+    onaylanır. Onaylanan (artık ACTIVE) ürünleri döndürür."""
+    if confirmed is None:
+        confirmed = [
+            {"item_id": it["item_id"]} for it in _draft_items(inventory_api, upload_id, user)
+        ]
+    resp = inventory_api.handler(
+        _event(
+            "POST /v1/uploads/{upload_id}/confirm",
+            path={"upload_id": upload_id},
+            body={"confirmed": confirmed},
+            user=user,
+        ),
+        None,
+    )
+    return resp
+
+
 class TestProfile:
     def test_register_requires_valid_fridge_id(self, handlers):
         _, _, inventory_api = handlers
@@ -188,15 +215,52 @@ class TestExtractor:
 
     def test_duplicate_s3_event_is_skipped_not_reprocessed(self, handlers, s3_client):
         _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
 
         first = extractor.handler(s3_event, None)
         second = extractor.handler(s3_event, None)
         assert first["processed"] == 1
         assert second["processed"] == 0
 
+        # Yinelenen olay ikinci bir DRAFT üretmemeli: kontrol ekranında tek ürün.
+        assert len(_draft_items(inventory_api, upload_id)) == 1
+        _confirm_drafts(inventory_api, upload_id)
         items = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
         assert len(items) == 1
+
+    def test_failed_extraction_releases_lock_so_retry_reprocesses(self, handlers, s3_client):
+        """Gemini hatası kilidi bırakmalı; yoksa retry 'duplicate' sanıp atlar,
+        olay Gemini'ye ulaşmadan sessizce yutulur ve DLQ'ya gitmez."""
+        from adapters.vision import StubVisionProvider, VisionError
+
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+
+        class _FailingProvider:
+            model_id = "failing-0"
+
+            def extract(self, image_bytes, mime_type):
+                raise VisionError("gemini patladı")
+
+        extractor._vision_provider = _FailingProvider()
+        with pytest.raises(VisionError):
+            extractor.handler(s3_event, None)
+
+        status = inventory_api.handler(
+            _event("GET /v1/uploads/{upload_id}", path={"upload_id": upload_id}), None
+        )
+        assert json.loads(status["body"])["status"] == "FAILED"
+
+        # Sağlayıcı düzelince aynı olayın retry'ı DUPLICATE sanılmadan yeniden
+        # işlenmeli (kilit bırakıldığı için).
+        extractor._vision_provider = StubVisionProvider(foods=None)
+        result = extractor.handler(s3_event, None)
+        assert result["processed"] == 1
+
+        status = inventory_api.handler(
+            _event("GET /v1/uploads/{upload_id}", path={"upload_id": upload_id}), None
+        )
+        assert json.loads(status["body"])["status"] == "COMPLETED"
 
     def test_unrecognized_object_key_is_skipped_without_crashing(self, handlers):
         _, extractor, _ = handlers
@@ -213,11 +277,136 @@ class TestExtractor:
         assert extractor.handler(event, None)["processed"] == 0
 
 
+class TestDraftConfirmFlow:
+    """Kontrol ekranı akışı: extraction DRAFT üretir → kullanıcı onaylar/reddeder."""
+
+    def _two_products(self):
+        from core.models import ExtractedFood, FieldConfidence, Quantity
+        from core.taxonomy import FoodCategory
+
+        return [
+            ExtractedFood(
+                name="süt",
+                category=FoodCategory.DAIRY,
+                quantity=Quantity(value=1),
+                confidence=FieldConfidence(name=0.9, category=0.9),
+            ),
+            ExtractedFood(
+                name="domates",
+                category=FoodCategory.PRODUCE_VEGETABLE,
+                quantity=Quantity(value=3),
+                confidence=FieldConfidence(name=0.9, category=0.9),
+            ),
+        ]
+
+    def test_extraction_creates_drafts_hidden_from_inventory(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+
+        # Envanterde GÖRÜNMEZ (onay bekliyor).
+        items = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
+        assert items == []
+        # Kontrol ekranında (upload-status) DRAFT olarak var.
+        drafts = _draft_items(inventory_api, upload_id)
+        assert len(drafts) == 1
+        assert drafts[0]["state"] == "DRAFT"
+
+    def test_confirm_activates_selected_and_rejects_rest(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client, foods=self._two_products())
+        extractor.handler(s3_event, None)
+
+        drafts = _draft_items(inventory_api, upload_id)
+        assert len(drafts) == 2
+        keep = drafts[0]["item_id"]
+        resp = _confirm_drafts(inventory_api, upload_id, confirmed=[{"item_id": keep}])
+        assert resp["statusCode"] == 200
+
+        active = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
+        assert [i["item_id"] for i in active] == [keep]
+        assert active[0]["state"] == "ACTIVE"
+
+    def test_confirm_with_crop_sets_image_ref_and_url(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+        item_id = _draft_items(inventory_api, upload_id)[0]["item_id"]
+
+        crop = json.loads(
+            inventory_api.handler(
+                _event("POST /v1/uploads/{upload_id}/crops", path={"upload_id": upload_id}), None
+            )["body"]
+        )
+        assert crop["object_key"].startswith(f"crops/{FRIDGE}/")
+        assert "url" in crop and "fields" in crop
+
+        resp = _confirm_drafts(
+            inventory_api,
+            upload_id,
+            confirmed=[{"item_id": item_id, "image_key": crop["object_key"]}],
+        )
+        item = json.loads(resp["body"])["items"][0]
+        assert item["image_ref"] == crop["object_key"]
+        assert item["image_url"]  # görüntüleme için presigned GET
+
+    def test_confirm_ignores_foreign_crop_key(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+        item_id = _draft_items(inventory_api, upload_id)[0]["item_id"]
+
+        resp = _confirm_drafts(
+            inventory_api,
+            upload_id,
+            confirmed=[{"item_id": item_id, "image_key": "crops/BASKA-DOLAP/u/x.jpg"}],
+        )
+        item = json.loads(resp["body"])["items"][0]
+        assert item["image_ref"] is None  # başka dolabın anahtarı yazılmaz
+
+    def test_confirm_applies_edits_including_value_max(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+        item_id = _draft_items(inventory_api, upload_id)[0]["item_id"]
+
+        resp = _confirm_drafts(
+            inventory_api,
+            upload_id,
+            confirmed=[
+                {
+                    "item_id": item_id,
+                    "name": "düzeltilmiş",
+                    "quantity": {"value": 8, "unit": "piece", "value_max": 10},
+                }
+            ],
+        )
+        item = json.loads(resp["body"])["items"][0]
+        assert item["name"] == "düzeltilmiş"
+        assert item["quantity"] == {"value": 8, "unit": "piece", "value_max": 10}
+
+    def test_confirm_twice_returns_409(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+        assert _confirm_drafts(inventory_api, upload_id)["statusCode"] == 200
+        assert _confirm_drafts(inventory_api, upload_id)["statusCode"] == 409
+
+    def test_confirm_unknown_item_id_returns_400(self, handlers, s3_client):
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+        resp = _confirm_drafts(inventory_api, upload_id, confirmed=[{"item_id": "itm_yok"}])
+        assert resp["statusCode"] == 400
+
+
 class TestInventoryApiCrud:
     def _seed_one_item(self, handlers, s3_client):
         _, extractor, inventory_api = handlers
-        _, s3_event = _upload_and_notify(handlers, s3_client)
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
         extractor.handler(s3_event, None)
+        # Extraction DRAFT üretir; envantere girmesi için kontrol ekranı onayı gerekir.
+        _confirm_drafts(inventory_api, upload_id)
         items = json.loads(inventory_api.handler(_event("GET /v1/items"), None)["body"])["items"]
         return inventory_api, items[0]["item_id"]
 
@@ -272,6 +461,54 @@ class TestInventoryApiCrud:
             None,
         )
         assert patch["statusCode"] == 400
+
+    def test_patch_preserves_quantity_value_max(self, handlers, s3_client):
+        """Kullanıcı '8-10 tane' aralığını kaydedince üst sınır (value_max)
+        kaybolmamalı — yazma yolu value_max'ı taşımalı."""
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
+        patch = inventory_api.handler(
+            _event(
+                "PATCH /v1/items/{item_id}",
+                path={"item_id": item_id},
+                body={"quantity": {"value": 8, "unit": "piece", "value_max": 10}},
+            ),
+            None,
+        )
+        assert patch["statusCode"] == 200
+        quantity = json.loads(patch["body"])["quantity"]
+        assert quantity == {"value": 8, "unit": "piece", "value_max": 10}
+
+    def test_patch_sanitizes_bad_value_max_instead_of_crashing(self, handlers, s3_client):
+        """Geçersiz value_max ('abc' / value'dan küçük) 500 vermemeli; sessizce
+        None'a inmeli (kalem kesin sayıya döner)."""
+        inventory_api, item_id = self._seed_one_item(handlers, s3_client)
+        for bad in ("abc", 3):
+            patch = inventory_api.handler(
+                _event(
+                    "PATCH /v1/items/{item_id}",
+                    path={"item_id": item_id},
+                    body={"quantity": {"value": 5, "unit": "piece", "value_max": bad}},
+                ),
+                None,
+            )
+            assert patch["statusCode"] == 200
+            assert json.loads(patch["body"])["quantity"]["value_max"] is None
+
+    def test_shopping_item_preserves_quantity_value_max(self, handlers, s3_client):
+        _, _, inventory_api = handlers
+        created = inventory_api.handler(
+            _event(
+                "POST /v1/shopping-lists/current/items",
+                body={"name": "domates", "quantity": {"value": 4, "unit": "piece", "value_max": 6}},
+            ),
+            None,
+        )
+        assert created["statusCode"] == 201
+        assert json.loads(created["body"])["quantity"] == {
+            "value": 4,
+            "unit": "piece",
+            "value_max": 6,
+        }
 
     def test_delete_removes_the_item(self, handlers, s3_client):
         inventory_api, item_id = self._seed_one_item(handlers, s3_client)

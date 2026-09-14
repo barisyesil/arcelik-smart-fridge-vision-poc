@@ -139,7 +139,10 @@ class TestCommitExtraction:
 
 class TestListActiveItems:
     def test_orders_by_freshness_date_ascending(self, repo):
+        from dataclasses import replace
+
         from core.inventory import build_item
+        from core.models import ItemState
 
         soon, _ = build_item(
             ExtractedFood(
@@ -171,8 +174,9 @@ class TestListActiveItems:
             captured_at=NOW,
             now=NOW,
         )
-        repo._table.put_item(Item=_row(later))
-        repo._table.put_item(Item=_row(soon))
+        # build_item DRAFT üretir; liste sıralamasını test etmek için ACTIVE'e al.
+        repo._table.put_item(Item=_row(replace(later, state=ItemState.ACTIVE)))
+        repo._table.put_item(Item=_row(replace(soon, state=ItemState.ACTIVE)))
 
         items = repo.list_active_items(FRIDGE)
         assert [i.name for i in items] == ["çabuk bozulan", "uzun ömürlü"]

@@ -34,8 +34,18 @@ Dev bağımlılıkları (FastAPI/uvicorn) `requirements-dev.txt` içindedir:
 pip install -r requirements-dev.txt
 ```
 
-`GEMINI_API_KEY`'i repo kökündeki `.env` dosyasına ekle (bkz. `.env.example`).
-Anahtar sunucu tarafında kalır; tarayıcıya **asla** gönderilmez.
+`GEMINI_API_KEY`'i **repo kökündeki** `.env` ya da `.env.local` dosyasına ekle
+(bkz. `.env.example`) — **`web/.env` DEĞİL**, o dosya yalnızca `VITE_` önekli
+web değişkenleri içindir ve Lab sunucusu onu okumaz. Anahtar sunucu tarafında
+kalır; tarayıcıya **asla** gönderilmez. Yükleme `playground/__init__.py`
+içinde otomatiktir — sunucuyu `run.ps1`/`run.sh` ile ya da doğrudan
+`uvicorn playground.server:app` ile başlatman fark etmez, ikisi de anahtarı
+bulur. `GET /health` yanıtındaki `has_api_key` alanıyla doğrula:
+
+```bash
+curl http://localhost:8900/health
+# {"ok":true,"has_api_key":true}
+```
 
 ## Çalıştırma
 
