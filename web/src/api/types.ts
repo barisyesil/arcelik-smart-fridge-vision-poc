@@ -12,11 +12,22 @@ export type PackageState = "unopened" | "opened" | "unknown";
 
 export type ItemState = "ACTIVE" | "CONSUMED" | "DISCARDED";
 
-export type QuantityUnit = "piece" | "pack" | "bottle" | "gram" | "milliliter";
+export type QuantityUnit =
+  | "piece"
+  | "pack"
+  | "box"
+  | "bottle"
+  | "bunch"
+  | "bag"
+  | "carton"
+  | "gram"
+  | "milliliter";
 
 export interface Quantity {
   value: number;
   unit: QuantityUnit;
+  /** Tahmini aralığın üst sınırı; kesin sayıda null/yok. `value` alt sınırdır. */
+  value_max?: number | null;
 }
 
 export interface FieldConfidence {

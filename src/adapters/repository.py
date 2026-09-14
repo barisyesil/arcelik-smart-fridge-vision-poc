@@ -124,7 +124,10 @@ def _quantity_to_dict(quantity: Quantity) -> dict:
 def _quantity_from_dict(data: object) -> Quantity | None:
     if not isinstance(data, dict):
         return None
-    return Quantity(value=int(data["value"]), unit=data["unit"])
+    # `value_max` sonradan eklendi: eski kayıtlarda alan yok, None kalır.
+    raw_max = data.get("value_max")
+    value_max = int(raw_max) if raw_max is not None else None
+    return Quantity(value=int(data["value"]), unit=data["unit"], value_max=value_max)
 
 
 def _confidence_to_dict(confidence: FieldConfidence) -> dict:

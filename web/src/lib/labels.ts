@@ -165,7 +165,11 @@ export const UPLOAD_STATUS_LABELS: Record<string, string> = {
 export const QUANTITY_UNIT_LABELS: Record<string, string> = {
   piece: "adet",
   pack: "paket",
+  box: "koli",
   bottle: "şişe",
+  bunch: "demet",
+  bag: "torba",
+  carton: "kutu",
   gram: "gram",
   milliliter: "ml",
 };
@@ -197,6 +201,22 @@ export const uploadStatusLabel = (key: string | null | undefined) =>
   label(UPLOAD_STATUS_LABELS, key);
 export const quantityUnitLabel = (key: string | null | undefined) =>
   label(QUANTITY_UNIT_LABELS, key);
+
+/**
+ * Miktarı okunur metne çevirir. Aralık varsa (`value_max` dolu ve value'dan
+ * büyük) "8–10 adet" gibi, kesin sayıda "10 adet" gibi gösterir. Modelin sayım
+ * belirsizliğini kullanıcıya olduğu gibi yansıtmak için tek yer burası.
+ */
+export function formatQuantity(quantity: {
+  value: number;
+  unit: string;
+  value_max?: number | null;
+}): string {
+  const unit = quantityUnitLabel(quantity.unit);
+  const hasRange = quantity.value_max != null && quantity.value_max > quantity.value;
+  const count = hasRange ? `${quantity.value}–${quantity.value_max}` : `${quantity.value}`;
+  return `${count} ${unit}`;
+}
 export const reviewReasonLabel = (key: string | null | undefined) =>
   label(REVIEW_REASON_LABELS, key);
 export const notificationModeLabel = (key: string | null | undefined) =>

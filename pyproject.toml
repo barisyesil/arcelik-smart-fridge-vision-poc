@@ -35,5 +35,14 @@ select = [
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
+[tool.ruff.lint.isort]
+# `playground/` repo kökünde bir first-party paket (yerel Prompt Lab dev aracı).
+known-first-party = ["playground"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI `File(...)`/`Form(...)` argüman varsayılanları framework idiyomudur;
+# B008 (varsayılanda fonksiyon çağrısı) burada bilinçli ve doğrudur.
+"playground/server.py" = ["B008"]
+
 [tool.ruff.format]
 quote-style = "double"

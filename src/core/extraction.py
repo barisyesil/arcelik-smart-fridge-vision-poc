@@ -23,7 +23,10 @@ from core.taxonomy import (
 #: Prompt versiyonu her Observation kaydına yazılır. Bu metni değiştirdiğinizde
 #: burayı da artırın — yoksa doğruluk ölçümü iki farklı prompt'u karıştırır.
 #: v2: her ürün için `box_2d` sınırlayıcı kutusu istendi + istem netleştirildi.
-PROMPT_VERSION = "v2"
+#: v3: aynı ürün ARTIK tek satırda toplanıp sayılıyor (10 domates = tek satır,
+#:     value=10). Sayı kesin değilse `value..value_max` aralığı, birim serbest
+#:     (tane/paket/koli...). Kutu artık fiziksel adet başına değil GRUP başına.
+PROMPT_VERSION = "v3"
 
 #: Gemini `box_2d` değerlerini bu ölçekte normalize eder. Kutu ayrıştırması ve
 #: doğrulaması bu sabite dayanır; modelin konvansiyonu değişirse tek yer burası.
@@ -33,8 +36,31 @@ BOX_COORD_MAX = 1000
 #: sabitleniyor — aksi halde aynı ürün iki farklı isimle envantere iki kez girer.
 SYSTEM_PROMPT = """Sen bir buzdolabı envanter asistanısın.
 Verilen fotoğraf bir buzdolabının içini ya da tezgâhtaki gıdaları gösterir ve
-genellikle BİRDEN FAZLA ürün içerir. Görevin fotoğraftaki her bir YENİLEBİLİR
-gıda ürününü ayrı ayrı, yapılandırılmış biçimde listelemektir.
+genellikle BİRDEN FAZLA farklı ürün grubu içerir. Görevin fotoğraftaki YENİLEBİLİR
+gıdaları ÜRÜN GRUBU bazında, yapılandırılmış biçimde listelemektir.
+
+Gruplama ve sayma kuralları (EN ÖNEMLİ KISIM):
+- Aynı üründen birden çok adet varsa bunları AYRI AYRI satırlara BÖLME; TEK bir
+  satırda topla ve kaç tane olduğunu `quantity` içinde ver. Örneğin fotoğrafta
+  10 domates varsa TEK bir "domates" satırı yaz, value=10 — 10 ayrı satır DEĞİL.
+- Farklı ürünler ayrı gruplardır: 10 domates + 3 salatalık + 2 süt = 3 satır.
+  Fotoğraftaki BÜTÜN ürün gruplarını eksiksiz tespit et, hiçbirini atlama.
+- Sayıyı net sayabiliyorsan kesin ver: value=adet, `value_max` alanını verme.
+- Net sayamıyorsan (yığın, üst üste, arkadakiler görünmüyor) makul bir ARALIK
+  ver: alt sınır `value`, üst sınır `value_max` (örn. yaklaşık 8-10 ise
+  value=8, value_max=10). `value_max` her zaman `value`'dan büyük ya da eşit.
+- Uydurma. Aralık gerçek belirsizliği yansıtsın; abartılı geniş aralık verme.
+
+Birim (`quantity.unit`) kuralları:
+- Sayıyı en doğal birimle ifade et ve yalnızca verilen birim listesinden seç:
+  - `piece` (tane): tek tek sayılan ürünler — domates, elma, yumurta, şişe süt.
+  - `pack` (paket): ambalajlı tekil ürün — bir paket kaşar, bir paket makarna.
+  - `box` (koli): koli/kutu içindeki toplu ürün.
+  - `bottle` (şişe): şişelenmiş içecek/sıvı.
+  - `bunch` (demet): demet halinde — maydanoz, muz, yeşillik.
+  - `bag` (torba): file/torba içinde — bir torba patates, bir poşet ekmek.
+  - `carton` (kutu-karton): karton kutu — bir karton yumurta, bir kutu meyve suyu.
+  - `gram` / `milliliter`: yalnızca tek tek sayılamayan dökme ürün için.
 
 Ürün kimliği kuralları:
 - `name` alanını Türkçe, tekil ve sade yaz (örn. "süt", "kaşar peyniri", "domates").
@@ -43,16 +69,14 @@ gıda ürününü ayrı ayrı, yapılandırılmış biçimde listelemektir.
 - Kategori, alt kategori ve ambalaj durumunu yalnızca verilen listelerden seç.
 - Alt kategori kategoriye ait olmalı. Uygun alt kategori yoksa boş bırak.
 - Ambalaj durumundan emin değilsen "unknown" yaz.
-- `quantity` alanında görünen fiziksel adedi ver (örn. 3 elma tek satırda value=3).
 
 Sınırlayıcı kutu (`box_2d`) kuralları:
-- Her ürün için o ürünü SIKICA çevreleyen bir kutu ver: [ymin, xmin, ymax, xmax].
+- Her ürün GRUBU için o grubun TAMAMINI çevreleyen tek bir kutu ver:
+  [ymin, xmin, ymax, xmax]. Kutu o gruba ait tüm adetleri içine alsın.
 - Değerler 0-1000 arası tam sayı olmalı; sol-üst köşe (0,0), sağ-alt (1000,1000).
-- Kutu yalnızca o tek ürünü kapsasın; komşu ürünleri veya boş rafı DAHİL ETME.
-  Bu kutular sonradan her ürünü ayrı bir görsele kırpmak için kullanılacak.
-- Aynı türden birden çok fiziksel ürün ayrı ayrı görünüyorsa (örn. yan yana iki
-  şişe süt) her birini AYRI satır ve AYRI kutu olarak ver.
-- Ürünü net göremiyorsan bile en iyi tahmininle bir kutu ver.
+- Kutu yalnızca o grubu kapsasın; başka ürün grubunu veya boş rafı DAHİL ETME.
+  Bu kutu sonradan o grubu ayrı bir görsele kırpmak için kullanılacak.
+- Grubu net göremiyorsan bile en iyi tahmininle bir kutu ver.
 
 Kısıtlar:
 - Fotoğraftaki hiçbir tarihi OKUMA ve tarih ÜRETME. Raf ömrü tahmini yapma.
@@ -87,8 +111,12 @@ def build_response_schema() -> dict:
                         "quantity": {
                             "type": "object",
                             "properties": {
+                                # `value`: kesin sayı ya da aralığın alt sınırı.
                                 "value": {"type": "integer"},
                                 "unit": {"type": "string", "enum": list(QUANTITY_UNITS)},
+                                # `value_max`: aralığın üst sınırı. Kesin sayıda
+                                # verilmez (required DEĞİL); verilirse >= value.
+                                "value_max": {"type": "integer"},
                             },
                             "required": ["value", "unit"],
                         },
@@ -133,7 +161,25 @@ def _parse_quantity(raw: object) -> Quantity:
     except (TypeError, ValueError):
         value = 1
     unit = raw.get("unit")
-    return Quantity(value=value, unit=unit if unit in QUANTITY_UNITS else "piece")
+    unit = unit if unit in QUANTITY_UNITS else "piece"
+    value_max = _parse_value_max(raw.get("value_max"), value)
+    return Quantity(value=value, unit=unit, value_max=value_max)
+
+
+def _parse_value_max(raw: object, value: int) -> int | None:
+    """Aralık üst sınırını güvene al: geçersiz ya da value'dan küçükse None.
+
+    Model bazen `value_max`'ı `value`'ya eşit ya da altında verebilir; bu
+    durumda aralık anlamsızdır ve tek sayı (`None`) olarak yorumlanır. Böylece
+    `Quantity.is_estimate` yalnızca gerçek bir aralıkta True döner.
+    """
+    if raw is None:
+        return None
+    try:
+        candidate = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return candidate if candidate > value else None
 
 
 def _clean_str(value: object) -> str | None:

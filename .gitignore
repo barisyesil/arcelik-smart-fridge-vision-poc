@@ -32,6 +32,9 @@ aws-credentials*
 fixtures/images/*
 !fixtures/images/.gitkeep
 
+# --- Prompt Lab: mühendisin kaydettiği prompt sürümleri kişiseldir ---
+playground/prompt_versions.json
+
 # --- IDE / OS ---
 .idea/
 .vscode/*

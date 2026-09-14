@@ -219,7 +219,22 @@ SUBCATEGORIES: dict[FoodCategory, tuple[str, ...]] = {
 }
 
 #: Adet birimi de kapalı liste — `quantity.unit` API yanıtında görünüyor.
-QUANTITY_UNITS: tuple[str, ...] = ("piece", "pack", "bottle", "gram", "milliliter")
+#: Model aynı üründen çok sayıda adedi tek satırda toplarken en doğal birimi
+#: seçer: tek tek sayılabilenler "piece" (tane), ambalajlılar "pack"/"box",
+#: demet halindekiler "bunch", torbadakiler "bag". Ağırlık/hacim birimleri
+#: (gram/milliliter) dökme ürünler için. Enum anahtarları İngilizce; Türkçe
+#: karşılıkları web `labels.ts` içinde (piece->tane, box->koli, bunch->demet).
+QUANTITY_UNITS: tuple[str, ...] = (
+    "piece",
+    "pack",
+    "box",
+    "bottle",
+    "bunch",
+    "bag",
+    "carton",
+    "gram",
+    "milliliter",
+)
 
 
 def category_values() -> list[str]:

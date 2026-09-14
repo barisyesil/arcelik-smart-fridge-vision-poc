@@ -328,6 +328,21 @@ Arayüz varsayılan olarak `http://localhost:5173` adresinde açılır. API adre
 arayüzdeki bağlantı panelinden veya `web/.env.local` içindeki `VITE_API_URL`
 değeriyle verilebilir.
 
+### Prompt Lab (AI mühendisi çalışma ortamı)
+
+Görsel çıkarım promptunu üretimden bağımsız deneyip ölçmek için yerel bir araç.
+Farklı prompt sürümlerini dener, modele giden tam prompt'u, token sayısını ve
+tahmini maliyeti gösterir. Üretim mimarisine dokunmaz; mobil ve Lambda hep
+`core.extraction` üretim promptunu kullanır.
+
+```powershell
+# 1) Yerel Lab sunucusu (repo kökünden; GEMINI_API_KEY .env'den okunur)
+.\playground\run.ps1
+# 2) Web'i çalıştır, sağ üstteki "🧪 Prompt Lab" bağlantısına tıkla (ya da /#lab)
+```
+
+Ayrıntı: [Prompt Lab rehberi](docs/prompt-lab.md).
+
 ### AWS altyapısı
 
 Önce Gemini anahtarını repoya yazmadan SSM'e ekleyin:
@@ -365,4 +380,5 @@ Bu ölçüm tamamlanmadan çözüm “üretime hazır” olarak değerlendirilme
 
 - [AWS altyapısı ve deploy adımları](infra/README.md)
 - [Web arayüzü rehberi](web/README.md)
+- [Prompt Lab — AI mühendisi çalışma ortamı](docs/prompt-lab.md)
 - [Doğrulama görselleri ve etiket formatı](fixtures/README.md)

@@ -137,11 +137,12 @@ _STUB_FOODS: list[ExtractedFood] = [
         bounding_box=BoundingBox(ymin=120, xmin=60, ymax=640, xmax=340),
     ),
     ExtractedFood(
+        # Grup + aralık örneği: yığın halinde ~8-10 domates TEK satırda.
         name="domates",
         category=FoodCategory.PRODUCE_VEGETABLE,
         subcategory="tomato",
         package_state=PackageState.OPENED,
-        quantity=Quantity(value=3, unit="piece"),
+        quantity=Quantity(value=8, unit="piece", value_max=10),
         confidence=FieldConfidence(name=0.81, category=0.88),
         bounding_box=BoundingBox(ymin=420, xmin=520, ymax=760, xmax=880),
     ),

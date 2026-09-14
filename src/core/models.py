@@ -147,8 +147,26 @@ class FieldConfidence:
 
 @dataclass(frozen=True)
 class Quantity:
+    """Bir ürün grubundaki miktar; kesin sayı ya da tahmini aralık.
+
+    Aynı üründen birden çok fiziksel adet TEK satırda toplanır (10 domates =
+    tek `domates` satırı, value=10). Model tam sayamıyorsa `value` alt sınırı,
+    `value_max` üst sınırı taşır ("8-10 tane" -> value=8, value_max=10). Kesin
+    sayıda `value_max` None kalır. Böylece istemci "10 tane" ile "yaklaşık
+    8-10 tane"yi ayırt edebilir; birim `unit` ile serbestçe seçilir (tane,
+    paket, koli, demet...).
+    """
+
     value: int
     unit: str = "piece"
+    #: Tahmini aralığın üst sınırı. None ise `value` kesin sayıdır. Verildiğinde
+    #: her zaman `value_max >= value` olur (parse aşamasında güvene alınır).
+    value_max: int | None = None
+
+    @property
+    def is_estimate(self) -> bool:
+        """Kesin sayı değil, bir aralık mı? Doğruluk ölçümünde işaretlemek için."""
+        return self.value_max is not None and self.value_max != self.value
 
 
 @dataclass(frozen=True)

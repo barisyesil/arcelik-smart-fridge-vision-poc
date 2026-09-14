@@ -76,6 +76,58 @@ def test_bad_quantity_degrades_to_one_piece():
     assert food.quantity.unit == "piece"
 
 
+def test_grouped_count_is_kept_as_single_line():
+    """10 domates TEK satır, value=10 — parse gruplamayı bozmaz."""
+    (food,) = parse_extraction(
+        {"products": [_product(name="domates", quantity={"value": 10, "unit": "piece"})]}
+    )
+    assert food.quantity.value == 10
+    assert food.quantity.value_max is None
+    assert food.quantity.is_estimate is False
+
+
+def test_estimate_range_is_parsed():
+    (food,) = parse_extraction(
+        {"products": [_product(quantity={"value": 8, "unit": "piece", "value_max": 10})]}
+    )
+    assert food.quantity.value == 8
+    assert food.quantity.value_max == 10
+    assert food.quantity.is_estimate is True
+
+
+def test_value_max_not_greater_than_value_is_treated_as_exact():
+    """value_max <= value anlamsız aralık: tek sayı (None) olarak yorumlanır."""
+    (eq,) = parse_extraction(
+        {"products": [_product(quantity={"value": 5, "unit": "piece", "value_max": 5})]}
+    )
+    (lt,) = parse_extraction(
+        {"products": [_product(quantity={"value": 5, "unit": "piece", "value_max": 2})]}
+    )
+    assert eq.quantity.value_max is None
+    assert eq.quantity.is_estimate is False
+    assert lt.quantity.value_max is None
+
+
+def test_malformed_value_max_is_ignored():
+    (food,) = parse_extraction(
+        {"products": [_product(quantity={"value": 3, "unit": "piece", "value_max": "cok"})]}
+    )
+    assert food.quantity.value == 3
+    assert food.quantity.value_max is None
+
+
+def test_new_units_are_accepted():
+    for unit in ("box", "bunch", "bag", "carton"):
+        (food,) = parse_extraction({"products": [_product(quantity={"value": 1, "unit": unit})]})
+        assert food.quantity.unit == unit
+
+
+def test_schema_declares_optional_value_max():
+    quantity = build_response_schema()["properties"]["products"]["items"]["properties"]["quantity"]
+    assert "value_max" in quantity["properties"]
+    assert "value_max" not in quantity["required"]
+
+
 def test_missing_optional_fields_are_none_not_empty_string():
     (food,) = parse_extraction({"products": [_product(brand="  ", raw_label=None)]})
     assert food.brand is None

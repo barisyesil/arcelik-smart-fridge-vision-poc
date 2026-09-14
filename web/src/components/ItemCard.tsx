@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { DiscardReason, InventoryItemDto, ItemPatch } from "../api/types";
 import { daysUntil, formatDaysLeft, urgencyOf } from "../lib/freshness";
-import { categoryLabel, packageStateLabel, quantityUnitLabel, subcategoryLabel } from "../lib/labels";
+import { categoryLabel, formatQuantity, packageStateLabel, subcategoryLabel } from "../lib/labels";
 
 interface ItemCardProps {
   item: InventoryItemDto;
@@ -90,9 +90,7 @@ export function ItemCard({ item, onUpdate, onDelete, onSwipe, onOpenAssessment }
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-        <span>
-          {item.quantity.value} {quantityUnitLabel(item.quantity.unit)}
-        </span>
+        <span>{formatQuantity(item.quantity)}</span>
         <span>·</span>
         <span>{packageStateLabel(item.package_state)}</span>
         {minConfidence !== null && (

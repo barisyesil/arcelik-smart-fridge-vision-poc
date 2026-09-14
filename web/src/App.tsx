@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CognitoConfig } from "./api/auth";
 import { postAssessment, type ApiConfig } from "./api/client";
 import type { DiscardReason, FreshnessAssessmentRequest, InventoryItemDto } from "./api/types";
@@ -7,6 +7,7 @@ import { AssessmentModal } from "./components/AssessmentModal";
 import { AuthGate } from "./components/AuthGate";
 import { Disclaimer } from "./components/Disclaimer";
 import { ExtractionResult } from "./components/ExtractionResult";
+import { PromptLab } from "./components/PromptLab";
 import { InventoryList } from "./components/InventoryList";
 import { ProfileSetup } from "./components/ProfileSetup";
 import { RecipesPanel } from "./components/RecipesPanel";
@@ -28,8 +29,20 @@ import { useUpload } from "./hooks/useUpload";
 
 type Tab = "envanter" | "kontrol" | "liste" | "tarifler";
 
+/** URL hash'i `#lab` içeriyorsa Prompt Lab moduna geç. */
+function useLabMode(): boolean {
+  const [labMode, setLabMode] = useState(() => window.location.hash.includes("lab"));
+  useEffect(() => {
+    const onHash = () => setLabMode(window.location.hash.includes("lab"));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  return labMode;
+}
+
 export default function App() {
   const settings = useSettings();
+  const labMode = useLabMode();
 
   // Cognito PKCE akışı bu deploy'a özel domain/client'a ihtiyaç duyar; ikisi
   // de girilmeden auth denenmez (useAuth `config: null` ile no-op çalışır).
@@ -115,18 +128,33 @@ export default function App() {
     [candidates, shopping],
   );
 
+  // Prompt Lab yerel dev aracıdır: cloud API/Cognito gerektirmez. Tüm hook'lar
+  // yukarıda çağrıldıktan SONRA (React hook kuralları) auth gate'lerinden önce
+  // devreye girer — böylece giriş yapmadan da erişilebilir.
+  if (labMode) {
+    return <PromptLab onExit={() => (window.location.hash = "")} />;
+  }
+
   // --- Aşamalı gate'ler: bağlantı ayarları -> Cognito girişi -> profil kaydı ---
 
   if (!settings.isConfigured) {
     return (
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-4 py-8 sm:px-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-            Akıllı Buzdolabı — Test Arayüzü
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Faz 2 · mobil cloud entegrasyonu test aracı
-          </p>
+        <header className="flex items-start justify-between gap-2">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+              Akıllı Buzdolabı — Test Arayüzü
+            </h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Faz 2 · mobil cloud entegrasyonu test aracı
+            </p>
+          </div>
+          <a
+            href="#lab"
+            className="shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            🧪 Prompt Lab
+          </a>
         </header>
         <SettingsBar config={settings.config} onChange={settings.setConfig} />
         <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
@@ -168,14 +196,22 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
-          Akıllı Buzdolabı — Test Arayüzü
-        </h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Faz 2 · fotoğraf yükle, kontrol kuyruğunu değerlendir, alışverişi ve
-          tarifleri gözden geçir
-        </p>
+      <header className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+            Akıllı Buzdolabı — Test Arayüzü
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Faz 2 · fotoğraf yükle, kontrol kuyruğunu değerlendir, alışverişi ve
+            tarifleri gözden geçir
+          </p>
+        </div>
+        <a
+          href="#lab"
+          className="shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          🧪 Prompt Lab
+        </a>
       </header>
 
       <AccountBar
