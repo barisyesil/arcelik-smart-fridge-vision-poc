@@ -262,6 +262,21 @@ class TestExtractor:
         )
         assert json.loads(status["body"])["status"] == "COMPLETED"
 
+    def test_upload_status_returns_stage_timings(self, handlers, s3_client):
+        """Darboğaz analizi: upload-status aşama sürelerini (ms) döndürmeli."""
+        _, extractor, inventory_api = handlers
+        upload_id, s3_event = _upload_and_notify(handlers, s3_client)
+        extractor.handler(s3_event, None)
+
+        status = json.loads(
+            inventory_api.handler(
+                _event("GET /v1/uploads/{upload_id}", path={"upload_id": upload_id}), None
+            )["body"]
+        )
+        timings = status["timings"]
+        assert set(timings) >= {"queue_ms", "s3_fetch_ms", "gemini_ms", "parse_build_ms"}
+        assert all(isinstance(v, int) and v >= 0 for v in timings.values())
+
     def test_unrecognized_object_key_is_skipped_without_crashing(self, handlers):
         _, extractor, _ = handlers
         event = {

@@ -343,6 +343,27 @@ tahmini maliyeti gösterir. Üretim mimarisine dokunmaz; mobil ve Lambda hep
 
 Ayrıntı: [Prompt Lab rehberi](docs/prompt-lab.md).
 
+### Gözlemlenebilirlik — yanıt süresi / darboğaz analizi
+
+Fotoğraf yüklendiği andan ürünler hazır olana kadar geçen sürenin **hangi
+aşamaya** gittiği ölçülür. Extractor her işlemde aşama sürelerini (ms) hesaplar:
+`queue_ms` (fotoğraf S3'e indi → Lambda başlangıcı; S3 olay gecikmesi + soğuk
+başlatma), `s3_fetch_ms`, `gemini_ms` (genelde en büyük pay), `parse_build_ms`,
+`commit_ms`, `lambda_ms`.
+
+- **Web:** her yüklemenin altında "Yanıt süresi dökümü" çubuk grafiği görünür
+  (istemci küçültme+yükleme + backend aşamaları + diğer). Tam döküm ayrıca
+  tarayıcı **console**'una da yazılır (`[crop→S3]` ve tamamlanma logları).
+- **Terminal / CloudWatch:** aşama süreleri `extraction_completed` yapısal
+  JSON log'unda `timings` alanında. Canlı izlemek için:
+
+  ```bash
+  aws logs tail /aws/lambda/fridge-extractor --follow --region eu-central-1
+  ```
+
+  `timings` alanı ayrıca `GET /v1/uploads/{id}` yanıtında da döner (istemci
+  gösterimi bunu kullanır).
+
 ### AWS altyapısı
 
 Önce Gemini anahtarını repoya yazmadan SSM'e ekleyin:

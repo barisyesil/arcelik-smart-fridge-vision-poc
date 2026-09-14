@@ -336,6 +336,8 @@ def _get_upload_status(event: dict) -> dict:
             "items": items,
             "source_image_url": source_image_url,
             "error": record.error_code,
+            # Aşama süreleri (ms): darboğaz analizi. Bkz. UploadRecord.timings.
+            "timings": record.timings,
         },
     )
 

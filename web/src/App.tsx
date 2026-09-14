@@ -6,7 +6,7 @@ import { AccountBar } from "./components/AccountBar";
 import { AssessmentModal } from "./components/AssessmentModal";
 import { AuthGate } from "./components/AuthGate";
 import { Disclaimer } from "./components/Disclaimer";
-import { ExtractionResult } from "./components/ExtractionResult";
+import { DraftReviewPanel } from "./components/DraftReviewPanel";
 import { PromptLab } from "./components/PromptLab";
 import { InventoryList } from "./components/InventoryList";
 import { ProfileSetup } from "./components/ProfileSetup";
@@ -73,7 +73,7 @@ export default function App() {
   const candidates = useCandidates(apiConfig, dataEnabled);
   const recipes = useRecipes(apiConfig, dataEnabled);
   const swipeActions = useSwipeActions(apiConfig);
-  const { tickets, startUpload } = useUpload(apiConfig);
+  const { tickets, startUpload, setConfirmState } = useUpload(apiConfig);
 
   const [tab, setTab] = useState<Tab>("envanter");
   const [assessingItem, setAssessingItem] = useState<InventoryItemDto | null>(null);
@@ -231,11 +231,17 @@ export default function App() {
       {completedWithItems.length > 0 && (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-slate-700 dark:text-slate-200">
-            Çıkarım sonucu — kırpılan ürünler
+            Kontrol ekranı — onayla ve envantere ekle
           </h2>
           <div className="flex flex-col gap-3">
             {completedWithItems.map((ticket) => (
-              <ExtractionResult key={ticket.uploadId} ticket={ticket} />
+              <DraftReviewPanel
+                key={ticket.uploadId}
+                ticket={ticket}
+                apiConfig={apiConfig}
+                onConfirmed={() => void inventory.refresh()}
+                onStateChange={(s) => setConfirmState(ticket.uploadId, s)}
+              />
             ))}
           </div>
         </section>

@@ -2,6 +2,9 @@ import type {
   AcceptCandidateResponse,
   AssessmentResponse,
   CandidatesResponse,
+  ConfirmItem,
+  ConfirmUploadResponse,
+  CreateCropUploadResponse,
   CreateUploadResponse,
   DeviceRegisterRequest,
   FreshnessAssessmentRequest,
@@ -118,6 +121,26 @@ export function getUploadStatus(
   uploadId: string,
 ): Promise<UploadStatusResponse> {
   return request(config, `/v1/uploads/${encodeURIComponent(uploadId)}`);
+}
+
+/** Kontrol ekranı onayında bir ürünün kırpılmış görselini yüklemek için presigned POST alır. */
+export function createCropUpload(
+  config: ApiConfig,
+  uploadId: string,
+): Promise<CreateCropUploadResponse> {
+  return request(config, `/v1/uploads/${encodeURIComponent(uploadId)}/crops`, { method: "POST" });
+}
+
+/** Kontrol ekranı onayı: seçili DRAFT ürünleri (crop + düzenlemelerle) ACTIVE yapar. */
+export function confirmUpload(
+  config: ApiConfig,
+  uploadId: string,
+  confirmed: ConfirmItem[],
+): Promise<ConfirmUploadResponse> {
+  return request(config, `/v1/uploads/${encodeURIComponent(uploadId)}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ confirmed }),
+  });
 }
 
 // --- Envanter ---
@@ -256,7 +279,7 @@ export function getRecipes(
  * S3 kendi imzalı URL'sinden çalışır ve kimlik gerektirmez.
  */
 export async function uploadToS3(
-  presign: CreateUploadResponse,
+  presign: { url: string; fields: Record<string, string> },
   file: Blob,
   contentType: string,
 ): Promise<void> {

@@ -63,6 +63,14 @@ export function ItemCard({ item, onUpdate, onDelete, onSwipe, onOpenAssessment }
   return (
     <li className={`flex flex-col gap-2.5 rounded-xl border p-4 ${URGENCY_STYLES[urgency]}`}>
       <div className="flex items-start justify-between gap-2">
+        {item.image_url && (
+          <img
+            src={item.image_url}
+            alt={item.name}
+            loading="lazy"
+            className="size-12 shrink-0 rounded-lg border border-slate-200 object-cover dark:border-slate-700"
+          />
+        )}
         <div className="min-w-0 flex-1">
           {isEditing ? (
             <input

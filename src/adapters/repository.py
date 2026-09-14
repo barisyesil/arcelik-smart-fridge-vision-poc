@@ -292,6 +292,7 @@ def _serialize_upload(record: UploadRecord) -> dict:
         "observation_id": record.observation_id,
         "item_ids": list(record.item_ids),
         "error_code": record.error_code,
+        "timings": record.timings,
         "schema_version": record.schema_version,
         "expires_at": int(record.created_at.timestamp()) + _TTL_SECONDS,
     }
@@ -308,6 +309,9 @@ def _deserialize_upload(data: dict) -> UploadRecord:
         observation_id=data.get("observation_id"),
         item_ids=tuple(data.get("item_ids") or ()),
         error_code=data.get("error_code"),
+        timings={k: int(v) for k, v in data["timings"].items()}
+        if isinstance(data.get("timings"), dict)
+        else None,
         schema_version=data.get("schema_version", SCHEMA_VERSION),
     )
 
@@ -602,7 +606,12 @@ class InventoryRepository(Protocol):
     def get_upload(self, upload_id: str) -> UploadRecord | None: ...
     def mark_upload_processing(self, upload_id: str) -> None: ...
     def mark_upload_failed(self, upload_id: str, error_code: str) -> None: ...
-    def commit_extraction(self, observation: Observation, items: list[InventoryItem]) -> None: ...
+    def commit_extraction(
+        self,
+        observation: Observation,
+        items: list[InventoryItem],
+        timings: dict[str, int] | None = None,
+    ) -> None: ...
     def list_active_items(self, fridge_id: str, limit: int = 100) -> list[InventoryItem]: ...
     def get_items(self, fridge_id: str, item_ids: list[str]) -> list[InventoryItem]: ...
     def update_item(self, fridge_id: str, item_id: str, changes: dict) -> InventoryItem: ...
@@ -671,7 +680,21 @@ class DynamoRepository:
             ExpressionAttributeValues={":s": UploadStatus.FAILED.value, ":e": error_code},
         )
 
-    def commit_extraction(self, observation: Observation, items: list[InventoryItem]) -> None:
+    def commit_extraction(
+        self,
+        observation: Observation,
+        items: list[InventoryItem],
+        timings: dict[str, int] | None = None,
+    ) -> None:
+        update_expr = "SET #s = :s, observation_id = :oid, item_ids = :ids"
+        expr_values: dict = {
+            ":s": UploadStatus.COMPLETED.value,
+            ":oid": observation.observation_id,
+            ":ids": [item.item_id for item in items],
+        }
+        if timings:
+            update_expr += ", #t = :t"
+            expr_values[":t"] = {k: int(v) for k, v in timings.items()}
         transact_items = [
             {"Put": {"TableName": self._table_name, "Item": _serialize_observation(observation)}},
             *(
@@ -682,13 +705,11 @@ class DynamoRepository:
                 "Update": {
                     "TableName": self._table_name,
                     "Key": upload_keys(observation.upload_id),
-                    "UpdateExpression": "SET #s = :s, observation_id = :oid, item_ids = :ids",
-                    "ExpressionAttributeNames": {"#s": "status"},
-                    "ExpressionAttributeValues": {
-                        ":s": UploadStatus.COMPLETED.value,
-                        ":oid": observation.observation_id,
-                        ":ids": [item.item_id for item in items],
-                    },
+                    "UpdateExpression": update_expr,
+                    "ExpressionAttributeNames": (
+                        {"#s": "status", "#t": "timings"} if timings else {"#s": "status"}
+                    ),
+                    "ExpressionAttributeValues": expr_values,
                 }
             },
         ]

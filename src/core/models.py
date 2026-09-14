@@ -313,6 +313,13 @@ class UploadRecord:
     observation_id: str | None = None
     item_ids: tuple[str, ...] = field(default_factory=tuple)
     error_code: str | None = None
+    #: Extractor'ın ölçtüğü aşama süreleri (ms): fotoğrafın S3'e ulaşmasından
+    #: item'ların yazılmasına kadar darboğaz analizi için. Anahtarlar:
+    #: `queue_ms` (S3'e iniş → Lambda başlangıcı), `s3_fetch_ms` (kaynağı indir),
+    #: `gemini_ms` (Gemini çağrısı), `parse_build_ms` (ayrıştır + raf ömrü + item).
+    #: `GET /v1/uploads/{id}` yanıtında döner; istemci uçtan uca süreyi kendi
+    #: ölçtüğüyle birleştirip toplam gecikmenin nereden geldiğini gösterir.
+    timings: dict[str, int] | None = None
     schema_version: str = SCHEMA_VERSION
 
 

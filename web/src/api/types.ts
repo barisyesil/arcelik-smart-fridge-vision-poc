@@ -10,7 +10,7 @@ export type FreshnessBasis = "CATEGORY_HEURISTIC" | "USER_PROVIDED";
 
 export type PackageState = "unopened" | "opened" | "unknown";
 
-export type ItemState = "ACTIVE" | "CONSUMED" | "DISCARDED";
+export type ItemState = "DRAFT" | "ACTIVE" | "CONSUMED" | "DISCARDED";
 
 export type QuantityUnit =
   | "piece"
@@ -72,7 +72,10 @@ export interface InventoryItemDto {
   last_reviewed_at: string | null;
   next_review_at: string | null;
   user_requested_review: boolean;
+  /** Kalemin kalıcı crop'unun S3 anahtarı (onayda yazılır); yoksa `null`. */
   image_ref: string | null;
+  /** `image_ref` varsa görüntüleme için kısa ömürlü presigned GET; kalıcı saklama. */
+  image_url?: string | null;
   version: number;
 }
 
@@ -96,6 +99,35 @@ export interface UploadStatusResponse {
    */
   source_image_url: string | null;
   error: string | null;
+  /**
+   * Extractor'ın ölçtüğü aşama süreleri (ms): `queue_ms` (fotoğraf S3'e indi →
+   * Lambda başlangıcı), `s3_fetch_ms`, `gemini_ms`, `parse_build_ms`. Darboğaz
+   * analizi için; yalnızca COMPLETED'de dolu.
+   */
+  timings?: Record<string, number> | null;
+}
+
+export interface CreateCropUploadResponse {
+  crop_id: string;
+  object_key: string;
+  url: string;
+  fields: Record<string, string>;
+}
+
+/** Onayda tek bir DRAFT ürün için karar: item_id + opsiyonel crop anahtarı + düzenlemeler. */
+export interface ConfirmItem {
+  item_id: string;
+  image_key?: string;
+  name?: string;
+  brand?: string;
+  category?: string;
+  subcategory?: string;
+  package_state?: PackageState;
+  quantity?: Quantity;
+}
+
+export interface ConfirmUploadResponse {
+  items: InventoryItemDto[];
 }
 
 export interface ItemListResponse {

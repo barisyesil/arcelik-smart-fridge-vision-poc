@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -96,21 +97,32 @@ def _log(event_name: str, **fields) -> None:
 
 
 def _process_one(repo: DynamoRepository, record: dict, upload_id: str) -> None:
+    # Aşama süreleri (ms) — fotoğrafın S3'e ulaşmasından item yazımına kadar
+    # darboğaz analizi için. queue_ms: fotoğraf S3'e indi ama Lambda'nın onu
+    # işlemeye başlaması ne kadar gecikti (S3 event → Lambda invoke + soğuk
+    # başlatma). Diğerleri Lambda içi aşamalar.
+    lambda_start = time.monotonic()
+    wall_start = datetime.now(UTC)
+
     repo.mark_upload_processing(upload_id)
 
     upload_record = repo.get_upload(upload_id)
     if upload_record is None:
         raise RuntimeError(f"UploadRecord bulunamadı: {upload_id}")
 
+    fetch_start = time.monotonic()
     s3_object = _get_s3_client().get_object(Bucket=record["bucket"], Key=record["key"])
     image_bytes = s3_object["Body"].read()
+    s3_fetch_ms = int((time.monotonic() - fetch_start) * 1000)
     mime_type = s3_object.get("ContentType") or "image/jpeg"
     # S3'ün nesne zaman damgası fotoğrafın çekildiği ana en yakın sinyaldir;
     # Lambda'nın ne zaman çalıştığı (yeniden denemelerde gecikebilir) değil.
     captured_at = s3_object.get("LastModified") or datetime.now(UTC)
+    queue_ms = max(0, int((wall_start - captured_at).total_seconds() * 1000))
 
     result = _get_vision_provider().extract(image_bytes, mime_type)
 
+    build_start = time.monotonic()
     now = datetime.now(UTC)
     observation = Observation(
         observation_id=new_id("obs"),
@@ -127,13 +139,32 @@ def _process_one(repo: DynamoRepository, record: dict, upload_id: str) -> None:
     )
     items, warnings = items_from_observation(observation, now)
     observation = replace(observation, warnings=tuple(warnings))
+    parse_build_ms = int((time.monotonic() - build_start) * 1000)
 
-    repo.commit_extraction(observation, items)
+    timings = {
+        "queue_ms": queue_ms,
+        "s3_fetch_ms": s3_fetch_ms,
+        "gemini_ms": result.latency_ms,
+        "parse_build_ms": parse_build_ms,
+    }
+
+    commit_start = time.monotonic()
+    repo.commit_extraction(observation, items, timings=timings)
+    commit_ms = int((time.monotonic() - commit_start) * 1000)
+
+    # Terminal/CloudWatch için tam döküm (commit + toplam Lambda süresi dahil).
+    # Depoya yazılan `timings` commit'ten ÖNCE ölçülenlerdir (commit kendini
+    # ölçemez); log commit_ms + lambda_ms'yi de ekler.
+    log_timings = {
+        **timings,
+        "commit_ms": commit_ms,
+        "lambda_ms": int((time.monotonic() - lambda_start) * 1000),
+    }
     _log(
         "extraction_completed",
         upload_id=upload_id,
         item_count=len(items),
-        latency_ms=result.latency_ms,
+        timings=log_timings,
         warnings=warnings,
     )
 

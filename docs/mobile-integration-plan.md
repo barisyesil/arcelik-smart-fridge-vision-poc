@@ -316,7 +316,9 @@ GET /v1/uploads/{upload_id}             → 200
   "observation_id": string|null,
   "items": [InventoryItem, ...],        // COMPLETED'de DRAFT ürünler (kontrol ekranı)
   "source_image_url": string|null,      // kırpma için presigned GET, ~5dk geçerli
-  "error": string|null
+  "error": string|null,
+  "timings": { "queue_ms": int, "s3_fetch_ms": int, "gemini_ms": int,
+               "parse_build_ms": int } | null   // COMPLETED'de aşama süreleri (darboğaz analizi)
 }
 ```
 
