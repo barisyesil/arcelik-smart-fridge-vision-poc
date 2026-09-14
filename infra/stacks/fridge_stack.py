@@ -11,8 +11,10 @@ from pathlib import Path
 
 from aws_cdk import Aws, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_apigatewayv2 as apigatewayv2
+from aws_cdk import aws_apigatewayv2_authorizers as apigatewayv2_authorizers
 from aws_cdk import aws_apigatewayv2_integrations as apigatewayv2_integrations
 from aws_cdk import aws_budgets as budgets
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
@@ -21,7 +23,12 @@ from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sqs as sqs
 from aws_cdk import aws_ssm as ssm
+from aws_cdk import custom_resources as cr
 from constructs import Construct
+
+#: Prototip için önceden provision edilmiş buzdolabı ID'leri. Kayıt sırasında
+#: kullanıcı bunlardan birini girer; veri bu ID bazında partition'lanır.
+SEED_FRIDGE_IDS = ("ARC-FRIDGE-001", "ARC-FRIDGE-002", "ARC-FRIDGE-003")
 
 
 class FridgeStack(Stack):
@@ -158,7 +165,8 @@ class FridgeStack(Stack):
             environment={
                 "TABLE_NAME": self.table.table_name,
                 "LOG_LEVEL": "INFO",
-                "DEFAULT_USER_ID": "u_demo",
+                # Üretimde kimlik yalnız doğrulanmış JWT `sub`'tan; x-user-id kabul edilmez.
+                "AUTH_MODE": "jwt",
             },
         )
 
@@ -249,11 +257,75 @@ class FridgeStack(Stack):
         self.api_function.add_environment("BUCKET_NAME", self.raw_bucket.bucket_name)
 
         # ------------------------------------------------------------------
+        # 6.5) Cognito User Pool — mobil kimlik doğrulama (public client, PKCE)
+        # Free tier: 50k MAU. Mobil client secret İÇERMEZ (SRS NFR-SEC-001);
+        # Authorization Code + PKCE kullanır. userId = JWT `sub`.
+        # ------------------------------------------------------------------
+        self.user_pool = cognito.UserPool(
+            self,
+            "UserPool",
+            user_pool_name="fridge-users",
+            self_sign_up_enabled=True,
+            sign_in_aliases=cognito.SignInAliases(email=True),
+            auto_verify=cognito.AutoVerifiedAttrs(email=True),
+            password_policy=cognito.PasswordPolicy(
+                min_length=8,
+                require_lowercase=True,
+                require_digits=True,
+                require_uppercase=False,
+                require_symbols=False,
+            ),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        self.user_pool_client = self.user_pool.add_client(
+            "MobileClient",
+            user_pool_client_name="fridge-mobile",
+            generate_secret=False,  # public client — mobil uygulamada secret tutulmaz
+            auth_flows=cognito.AuthFlow(user_srp=True),
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE,
+                ],
+                # Mobil deep link (PKCE geri dönüşü).
+                callback_urls=["arcelikfridge://auth"],
+                logout_urls=["arcelikfridge://signout"],
+            ),
+        )
+        # Web test arayüzü için AYRI public client. Aynı client'ı mobil deep-link
+        # ve tarayıcı localhost callback'iyle paylaşmıyoruz: biri sızarsa diğerinin
+        # callback allowlist'i değişmez. Cognito Hosted UI, `http://localhost`
+        # callback/logout URL'lerine (yalnızca localhost) test amaçlı izin verir.
+        self.web_client = self.user_pool.add_client(
+            "WebTestClient",
+            user_pool_client_name="fridge-web-test",
+            generate_secret=False,
+            auth_flows=cognito.AuthFlow(user_srp=True),
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[
+                    cognito.OAuthScope.OPENID,
+                    cognito.OAuthScope.EMAIL,
+                    cognito.OAuthScope.PROFILE,
+                ],
+                callback_urls=["http://localhost:5173/auth/callback"],
+                logout_urls=["http://localhost:5173/"],
+            ),
+        )
+        # Hosted UI domain: /oauth2/authorize, /oauth2/token, /logout buradan
+        # sunulur. Prefix hesap kimliğinden türetilir — global olarak benzersiz
+        # olmalı, hesap ID'si bunu garanti eder.
+        self.user_pool_domain = self.user_pool.add_domain(
+            "Domain",
+            cognito_domain=cognito.CognitoDomainOptions(domain_prefix=f"fridge-{Aws.ACCOUNT_ID}"),
+        )
+
+        # ------------------------------------------------------------------
         # 7) HTTP API `fridge-api-gw`
-        # Auth yok. Throttle: rate 5 rps, burst 10. CORS sadece localhost:5173.
-        # Rotalar (API kontratı v1, path'ler dondurulmuş):
-        #   POST /v1/uploads, GET /v1/uploads/{upload_id}, GET /v1/items,
-        #   PATCH /v1/items/{item_id}, DELETE /v1/items/{item_id}
+        # JWT authorizer (Cognito). Throttle: rate 5 rps, burst 10. CORS sadece
+        # localhost:5173. Tüm v1 rotaları JWT ister; kimlik `sub` claim'inden alınır.
         # ------------------------------------------------------------------
         self.api_access_log_group = logs.LogGroup(
             self,
@@ -268,10 +340,11 @@ class FridgeStack(Stack):
             api_name="fridge-api-gw",
             cors_preflight=apigatewayv2.CorsPreflightOptions(
                 allow_origins=["http://localhost:5173"],
-                allow_headers=["content-type", "x-user-id"],
+                allow_headers=["content-type", "authorization", "x-user-id"],
                 allow_methods=[
                     apigatewayv2.CorsHttpMethod.GET,
                     apigatewayv2.CorsHttpMethod.POST,
+                    apigatewayv2.CorsHttpMethod.PUT,
                     apigatewayv2.CorsHttpMethod.PATCH,
                     apigatewayv2.CorsHttpMethod.DELETE,
                 ],
@@ -281,18 +354,47 @@ class FridgeStack(Stack):
             "ApiIntegration",
             self.api_function,
         )
+        jwt_authorizer = apigatewayv2_authorizers.HttpUserPoolAuthorizer(
+            "JwtAuthorizer",
+            self.user_pool,
+            user_pool_clients=[self.user_pool_client, self.web_client],
+        )
+        # API kontratı v1 — tüm rotalar JWT ister. Bu liste
+        # `handlers.inventory_api.ROUTES` ile birebir eşleşmeli
+        # (tests/unit/test_contract_surface.py kilitler).
+        M = apigatewayv2.HttpMethod
         routes = (
-            (apigatewayv2.HttpMethod.POST, "/v1/uploads"),
-            (apigatewayv2.HttpMethod.GET, "/v1/uploads/{upload_id}"),
-            (apigatewayv2.HttpMethod.GET, "/v1/items"),
-            (apigatewayv2.HttpMethod.PATCH, "/v1/items/{item_id}"),
-            (apigatewayv2.HttpMethod.DELETE, "/v1/items/{item_id}"),
+            (M.GET, "/v1/users/me"),
+            (M.PUT, "/v1/users/me"),
+            (M.PUT, "/v1/users/me/notification-preferences"),
+            (M.POST, "/v1/devices"),
+            (M.DELETE, "/v1/devices/{installation_id}"),
+            (M.POST, "/v1/uploads"),
+            (M.GET, "/v1/uploads/{upload_id}"),
+            (M.GET, "/v1/items"),
+            (M.PATCH, "/v1/items/{item_id}"),
+            (M.DELETE, "/v1/items/{item_id}"),
+            (M.POST, "/v1/items/{item_id}/actions"),
+            (M.POST, "/v1/items/{item_id}/freshness-assessments"),
+            (M.PUT, "/v1/items/{item_id}/reminder"),
+            (M.DELETE, "/v1/items/{item_id}/reminder"),
+            (M.POST, "/v1/item-actions/{action_id}/undo"),
+            (M.GET, "/v1/review-queue"),
+            (M.GET, "/v1/shopping-lists/current"),
+            (M.POST, "/v1/shopping-lists/current/items"),
+            (M.PATCH, "/v1/shopping-lists/current/items/{shopping_item_id}"),
+            (M.DELETE, "/v1/shopping-lists/current/items/{shopping_item_id}"),
+            (M.GET, "/v1/replacement-candidates"),
+            (M.POST, "/v1/replacement-candidates/{candidate_id}/accept"),
+            (M.POST, "/v1/replacement-candidates/{candidate_id}/dismiss"),
+            (M.GET, "/v1/recipes/recommendations"),
         )
         for method, path in routes:
             self.http_api.add_routes(
                 path=path,
                 methods=[method],
                 integration=api_integration,
+                authorizer=jwt_authorizer,
             )
 
         default_stage = self.http_api.default_stage
@@ -374,9 +476,15 @@ class FridgeStack(Stack):
         raw_bucket_arn = f"arn:{Aws.PARTITION}:s3:::{raw_bucket_name}"
 
         self.table.grant_read_write_data(self.api_function)
+        # Swipe/assessment/candidate-accept atomik yazımları için (extractor gibi).
+        self.table.grant(self.api_function, "dynamodb:TransactWriteItems")
+        # PutObject: presigned POST üretimi (yükleme). GetObject: fridge-api,
+        # işlem tamamlandığında arayüzün ürünleri bounding box'a göre kırpması
+        # için kaynak fotoğrafın presigned GET URL'sini üretir. İkisi de yalnızca
+        # `uploads/*` önekiyle sınırlı.
         self.api_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:PutObject"],
+                actions=["s3:PutObject", "s3:GetObject"],
                 resources=[f"{raw_bucket_arn}/uploads/*"],
             )
         )
@@ -391,7 +499,67 @@ class FridgeStack(Stack):
         )
         self.gemini_api_key.grant_read(self.extractor_function)
 
-        # Web arayüzünün .env'i için gerekli çıktılar.
+        # ------------------------------------------------------------------
+        # 10) Fridge registry seed — prototip buzdolabı ID'leri
+        # Kayıt sırasında kullanıcı bu ID'lerden birini girer. IaC ile
+        # deploy'da yazılır (tekrar üretilebilirlik ilkesi). created_at sabit —
+        # her deploy'da aynı öğeyi ürettiği için idempotent.
+        # ------------------------------------------------------------------
+        seed_policy = cr.AwsCustomResourcePolicy.from_statements(
+            [iam.PolicyStatement(actions=["dynamodb:PutItem"], resources=[self.table.table_arn])]
+        )
+        for fridge_id in SEED_FRIDGE_IDS:
+            call = cr.AwsSdkCall(
+                service="DynamoDB",
+                action="putItem",
+                parameters={
+                    "TableName": self.table.table_name,
+                    "Item": {
+                        "PK": {"S": f"FRIDGE#{fridge_id}"},
+                        "SK": {"S": "META"},
+                        "entity_type": {"S": "FRIDGE"},
+                        "fridge_id": {"S": fridge_id},
+                        "label": {"S": f"Prototip Dolap {fridge_id}"},
+                        "status": {"S": "ACTIVE"},
+                        "created_at": {"S": "2026-09-11T00:00:00Z"},
+                    },
+                },
+                physical_resource_id=cr.PhysicalResourceId.of(f"seed-{fridge_id}"),
+            )
+            cr.AwsCustomResource(
+                self,
+                f"SeedFridge{fridge_id.replace('-', '')}",
+                on_create=call,
+                on_update=call,
+                policy=seed_policy,
+            )
+
+        # Mobil ve web istemcinin yapılandırması için gerekli çıktılar.
         CfnOutput(self, "ApiUrl", value=self.http_api.api_endpoint)
         CfnOutput(self, "BucketName", value=self.raw_bucket.bucket_name)
         CfnOutput(self, "TableName", value=self.table.table_name)
+        CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
+        CfnOutput(
+            self,
+            "UserPoolClientId",
+            value=self.user_pool_client.user_pool_client_id,
+            description="Mobil (Kotlin) uygulamanın kullanacağı Cognito app client ID",
+        )
+        CfnOutput(
+            self,
+            "WebTestClientId",
+            value=self.web_client.user_pool_client_id,
+            description="Web test arayüzünün kullanacağı Cognito app client ID",
+        )
+        CfnOutput(
+            self,
+            "CognitoDomain",
+            value=f"https://{self.user_pool_domain.domain_name}.auth.{Aws.REGION}.amazoncognito.com",
+            description="Hosted UI / OAuth taban URL'si (authorize, token, logout uçları)",
+        )
+        CfnOutput(
+            self,
+            "SeedFridgeIds",
+            value=",".join(SEED_FRIDGE_IDS),
+            description="Prototip için geçerli buzdolabı ID'leri (kayıtta kullanılır)",
+        )

@@ -18,6 +18,11 @@ logger.setLevel(LOG_LEVEL)
 
 DEFAULT_USER_ID = os.environ.get("DEFAULT_USER_ID", "u_demo")
 
+#: "jwt" (üretim): kimlik yalnızca doğrulanmış JWT `sub` claim'inden alınır
+#: (API Gateway JWT authorizer). "dev": JWT yoksa `x-user-id` header'ına düşer —
+#: yerel test (moto) ve web test aracı için. Üretimde ASLA "dev" olmamalı.
+AUTH_MODE = os.environ.get("AUTH_MODE", "jwt")
+
 _CORS_HEADERS = {
     # Asıl CORS API Gateway'de tanımlı. Bunlar Lambda doğrudan çağrıldığında
     # (konsol testi) yanıtı okunabilir tutmak için.
@@ -69,10 +74,32 @@ def not_implemented(route: str) -> dict[str, Any]:
     return respond(501, {"error": "not_implemented", "route": route})
 
 
+def jwt_claims(event: dict[str, Any]) -> dict[str, Any]:
+    """API Gateway JWT authorizer'ın doğruladığı claim'ler."""
+    authorizer = (event.get("requestContext") or {}).get("authorizer") or {}
+    jwt = authorizer.get("jwt") or {}
+    return jwt.get("claims") or {}
+
+
+def authenticated_user_id(event: dict[str, Any]) -> str | None:
+    """Doğrulanmış kullanıcı kimliği (`sub`). Kimlik yoksa `None`.
+
+    Üretimde (`AUTH_MODE=jwt`) kimlik yalnızca JWT `sub` claim'inden gelir;
+    kullanıcı tarafından yazılan header'a asla güvenilmez (NFR-SEC-005). Yerel
+    geliştirmede (`AUTH_MODE=dev`) JWT yoksa `x-user-id` header'ına düşülür.
+    """
+    sub = jwt_claims(event).get("sub")
+    if sub:
+        return sub
+    if AUTH_MODE == "dev":
+        headers = event.get("headers") or {}
+        return headers.get("x-user-id") or DEFAULT_USER_ID
+    return None
+
+
 def user_id_from(event: dict[str, Any]) -> str:
-    """Kimlik header'dan okunur. Faz 1'de kimlik doğrulama yoktur."""
-    headers = event.get("headers") or {}
-    return headers.get("x-user-id") or DEFAULT_USER_ID
+    """Geriye dönük yardımcı. Kimlik yoksa DEFAULT_USER_ID (yalnız dev akışları)."""
+    return authenticated_user_id(event) or DEFAULT_USER_ID
 
 
 def route_key(event: dict[str, Any]) -> str:

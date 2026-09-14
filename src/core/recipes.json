@@ -1,0 +1,114 @@
+{
+  "dataset_version": "recipes-2026-09-v1",
+  "recipes": [
+    {
+      "recipe_id": "rcp_menemen",
+      "title": "Menemen",
+      "description": "Domates, biber ve yumurtayla klasik Türk kahvaltısı.",
+      "image_ref": null,
+      "meal_types": ["kahvalti", "hafif_aksam"],
+      "servings": 2,
+      "prep_minutes": 5,
+      "cook_minutes": 15,
+      "ingredients": [
+        {"name": "yumurta", "category": "egg", "subcategory": "shell_egg", "required": true, "quantity_text": "3 adet", "substitution_group": null},
+        {"name": "domates", "category": "produce_vegetable", "subcategory": "tomato", "required": true, "quantity_text": "2 adet", "substitution_group": null},
+        {"name": "yeşil biber", "category": "produce_vegetable", "subcategory": "pepper", "required": true, "quantity_text": "1 adet", "substitution_group": null},
+        {"name": "beyaz peynir", "category": "dairy", "subcategory": "cheese_soft", "required": false, "quantity_text": "isteğe bağlı", "substitution_group": null}
+      ],
+      "steps": ["Biberleri yağda kavur.", "Domatesi ekleyip pişir.", "Yumurtaları kırıp karıştır."],
+      "diet_tags": ["vejetaryen"],
+      "allergen_tags": ["yumurta", "sut"]
+    },
+    {
+      "recipe_id": "rcp_peynirli_omlet",
+      "title": "Peynirli Omlet",
+      "description": "Hızlı ve doyurucu peynirli omlet.",
+      "image_ref": null,
+      "meal_types": ["kahvalti"],
+      "servings": 1,
+      "prep_minutes": 3,
+      "cook_minutes": 7,
+      "ingredients": [
+        {"name": "yumurta", "category": "egg", "subcategory": "shell_egg", "required": true, "quantity_text": "2 adet", "substitution_group": null},
+        {"name": "kaşar peyniri", "category": "dairy", "subcategory": "cheese_hard", "required": true, "quantity_text": "50 g", "substitution_group": "cheese"}
+      ],
+      "steps": ["Yumurtaları çırp.", "Tavada pişirip peyniri ekle."],
+      "diet_tags": ["vejetaryen"],
+      "allergen_tags": ["yumurta", "sut"]
+    },
+    {
+      "recipe_id": "rcp_domates_corbasi",
+      "title": "Domates Çorbası",
+      "description": "Yaklaşan domatesleri değerlendiren sıcacık çorba.",
+      "image_ref": null,
+      "meal_types": ["ana_yemek", "hafif_aksam"],
+      "servings": 4,
+      "prep_minutes": 10,
+      "cook_minutes": 25,
+      "ingredients": [
+        {"name": "domates", "category": "produce_vegetable", "subcategory": "tomato", "required": true, "quantity_text": "5 adet", "substitution_group": null},
+        {"name": "un", "category": "pantry_dry", "subcategory": "flour_grain", "required": true, "quantity_text": "1 yemek kaşığı", "substitution_group": null},
+        {"name": "süt", "category": "dairy", "subcategory": "milk_fresh", "required": false, "quantity_text": "1 su bardağı", "substitution_group": null}
+      ],
+      "steps": ["Domatesleri rendele.", "Unu kavur, domatesi ekle.", "Kaynatıp blenderdan geçir."],
+      "diet_tags": ["vejetaryen"],
+      "allergen_tags": ["gluten", "sut"]
+    },
+    {
+      "recipe_id": "rcp_sebze_sote",
+      "title": "Karışık Sebze Sote",
+      "description": "Buzdolabındaki yaklaşan sebzeleri toplayan pratik sote.",
+      "image_ref": null,
+      "meal_types": ["ana_yemek"],
+      "servings": 3,
+      "prep_minutes": 15,
+      "cook_minutes": 20,
+      "ingredients": [
+        {"name": "kabak", "category": "produce_vegetable", "subcategory": "zucchini", "required": true, "quantity_text": "1 adet", "substitution_group": "veg"},
+        {"name": "patlıcan", "category": "produce_vegetable", "subcategory": "eggplant", "required": true, "quantity_text": "1 adet", "substitution_group": "veg"},
+        {"name": "biber", "category": "produce_vegetable", "subcategory": "pepper", "required": false, "quantity_text": "2 adet", "substitution_group": "veg"},
+        {"name": "domates", "category": "produce_vegetable", "subcategory": "tomato", "required": false, "quantity_text": "2 adet", "substitution_group": "veg"}
+      ],
+      "steps": ["Sebzeleri doğra.", "Yağda sırayla kavur.", "Tuzla ve servis et."],
+      "diet_tags": ["vejetaryen", "vegan"],
+      "allergen_tags": []
+    },
+    {
+      "recipe_id": "rcp_muzlu_smoothie",
+      "title": "Muzlu Süt Smoothie",
+      "description": "Kararmaya başlayan muzları değerlendiren içecek.",
+      "image_ref": null,
+      "meal_types": ["kahvalti", "ara_ogun"],
+      "servings": 2,
+      "prep_minutes": 5,
+      "cook_minutes": 0,
+      "ingredients": [
+        {"name": "muz", "category": "produce_fruit", "subcategory": "banana", "required": true, "quantity_text": "2 adet", "substitution_group": null},
+        {"name": "süt", "category": "dairy", "subcategory": "milk_fresh", "required": true, "quantity_text": "2 su bardağı", "substitution_group": "milk"},
+        {"name": "yoğurt", "category": "dairy", "subcategory": "yogurt", "required": false, "quantity_text": "2 kaşık", "substitution_group": "milk"}
+      ],
+      "steps": ["Tüm malzemeleri blendera koy.", "Pürüzsüz olana dek karıştır."],
+      "diet_tags": ["vejetaryen"],
+      "allergen_tags": ["sut"]
+    },
+    {
+      "recipe_id": "rcp_yogurtlu_makarna",
+      "title": "Yoğurtlu Makarna",
+      "description": "Kiler ve süt ürünleriyle hızlı ana yemek.",
+      "image_ref": null,
+      "meal_types": ["ana_yemek"],
+      "servings": 3,
+      "prep_minutes": 5,
+      "cook_minutes": 15,
+      "ingredients": [
+        {"name": "makarna", "category": "pantry_dry", "subcategory": "dry_pasta_rice", "required": true, "quantity_text": "250 g", "substitution_group": null},
+        {"name": "yoğurt", "category": "dairy", "subcategory": "yogurt", "required": true, "quantity_text": "1 su bardağı", "substitution_group": null},
+        {"name": "sarımsak", "category": "produce_vegetable", "subcategory": "garlic", "required": false, "quantity_text": "1 diş", "substitution_group": null}
+      ],
+      "steps": ["Makarnayı haşla.", "Sarımsaklı yoğurtla karıştır."],
+      "diet_tags": ["vejetaryen"],
+      "allergen_tags": ["gluten", "sut"]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { InventoryItemDto, ItemPatch } from "../api/types";
+import type { DiscardReason, InventoryItemDto, ItemPatch } from "../api/types";
 import { daysUntil, formatDaysLeft, urgencyOf } from "../lib/freshness";
 import { categoryLabel, packageStateLabel, quantityUnitLabel, subcategoryLabel } from "../lib/labels";
 
@@ -7,6 +7,12 @@ interface ItemCardProps {
   item: InventoryItemDto;
   onUpdate: (patch: ItemPatch) => Promise<void>;
   onDelete: () => Promise<void>;
+  /** Tükettim/Attım — swipe aksiyonu olarak sunucuya gider (idempotent,
+   * geri alınabilir). Doğrudan `state` PATCH'i DEĞİLDİR: sunucu tarafında
+   * `SwipeAction` olayı + `ReplacementCandidate` üretir. */
+  onSwipe: (type: "CONSUMED" | "DISCARDED", reason?: DiscardReason) => Promise<void>;
+  /** "Kontrol Et" — yukarı swipe karşılığı: değerlendirme panelini açar. */
+  onOpenAssessment: () => void;
 }
 
 const URGENCY_STYLES: Record<string, string> = {
@@ -21,12 +27,24 @@ const URGENCY_TEXT: Record<string, string> = {
   ok: "text-slate-500 dark:text-slate-400",
 };
 
-export function ItemCard({ item, onUpdate, onDelete }: ItemCardProps) {
+const DISCARD_REASONS: { value: DiscardReason; label: string }[] = [
+  { value: "OVERPURCHASED", label: "Gereğinden fazla alındı" },
+  { value: "NO_OPPORTUNITY_TO_CONSUME", label: "Tüketmeye fırsat olmadı" },
+  { value: "SPOILED_EARLIER_THAN_EXPECTED", label: "Beklenenden erken bozuldu" },
+  { value: "IMPROPER_STORAGE", label: "Saklama koşulu uygun değildi" },
+  { value: "WRONG_DETECTION", label: "Ürün yanlış tanındı" },
+  { value: "OTHER", label: "Diğer" },
+];
+
+export function ItemCard({ item, onUpdate, onDelete, onSwipe, onOpenAssessment }: ItemCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(item.name);
   const [isBusy, setIsBusy] = useState(false);
+  const [isPickingReason, setIsPickingReason] = useState(false);
 
-  const daysLeft = daysUntil(item.estimated_freshness_date);
+  // Kullanıcı düzeltmesi varsa etkin tarih ondan gelir (BR-002); sistem
+  // tahmini ayrı gösterilir ki ikisi karışmasın.
+  const daysLeft = daysUntil(item.effective_fresh_until);
   const urgency = urgencyOf(daysLeft);
 
   const runAction = async (action: () => Promise<void>) => {
@@ -85,72 +103,121 @@ export function ItemCard({ item, onUpdate, onDelete }: ItemCardProps) {
         )}
       </div>
 
-      <p className={`text-sm font-medium ${URGENCY_TEXT[urgency]}`}>{formatDaysLeft(daysLeft)}</p>
-
-      <div className="mt-1 flex flex-wrap gap-1.5">
-        {isEditing ? (
-          <>
-            <button
-              type="button"
-              disabled={isBusy || draftName.trim().length === 0}
-              onClick={() =>
-                runAction(async () => {
-                  await onUpdate({ name: draftName.trim() });
-                  setIsEditing(false);
-                })
-              }
-              className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-white dark:text-slate-900"
-            >
-              Kaydet
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraftName(item.name);
-                setIsEditing(false);
-              }}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300"
-            >
-              Vazgeç
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => runAction(() => onUpdate({ state: "CONSUMED" }))}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Tükettim
-            </button>
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => runAction(() => onUpdate({ state: "DISCARDED" }))}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Attım
-            </button>
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => setIsEditing(true)}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Düzelt
-            </button>
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => runAction(onDelete)}
-              className="ml-auto rounded-md px-2.5 py-1 text-xs text-rose-500 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30"
-            >
-              Sil
-            </button>
-          </>
+      <div>
+        <p className={`text-sm font-medium ${URGENCY_TEXT[urgency]}`}>{formatDaysLeft(daysLeft)}</p>
+        {item.user_adjusted_fresh_until && (
+          <p className="text-[11px] text-slate-400">
+            Sistem tahmini: {item.predicted_fresh_until} · senin değerlendirmen esas alınıyor
+          </p>
         )}
       </div>
+
+      {isPickingReason ? (
+        <div className="flex flex-col gap-1.5 rounded-md border border-slate-200 p-2 dark:border-slate-700">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Bu ürünü kullanamamanın temel nedeni neydi? (isteğe bağlı)
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {DISCARD_REASONS.map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                disabled={isBusy}
+                onClick={() =>
+                  runAction(async () => {
+                    await onSwipe("DISCARDED", r.value);
+                    setIsPickingReason(false);
+                  })
+                }
+                className="rounded-full border border-slate-300 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                {r.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => runAction(() => onSwipe("DISCARDED"))}
+              className="rounded-full px-2.5 py-1 text-[11px] text-slate-400 hover:text-slate-600 disabled:opacity-40"
+            >
+              Belirtmek istemiyorum
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {isEditing ? (
+            <>
+              <button
+                type="button"
+                disabled={isBusy || draftName.trim().length === 0}
+                onClick={() =>
+                  runAction(async () => {
+                    await onUpdate({ name: draftName.trim() });
+                    setIsEditing(false);
+                  })
+                }
+                className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-white dark:text-slate-900"
+              >
+                Kaydet
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftName(item.name);
+                  setIsEditing(false);
+                }}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300"
+              >
+                Vazgeç
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => runAction(() => onSwipe("CONSUMED"))}
+                className="rounded-md border border-emerald-300 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+              >
+                Tükettim
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => setIsPickingReason(true)}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Attım
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={onOpenAssessment}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Kontrol Et
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => setIsEditing(true)}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Düzelt
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => runAction(onDelete)}
+                className="ml-auto rounded-md px-2.5 py-1 text-xs text-rose-500 hover:bg-rose-50 disabled:opacity-40 dark:hover:bg-rose-950/30"
+              >
+                Sil
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </li>
   );
 }

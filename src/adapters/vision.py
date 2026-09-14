@@ -19,7 +19,8 @@ from google import genai
 from google.genai import types
 
 from core.extraction import PROMPT_VERSION, SYSTEM_PROMPT, build_response_schema, parse_extraction
-from core.models import ExtractedFood
+from core.models import BoundingBox, ExtractedFood, FieldConfidence, Quantity
+from core.taxonomy import FoodCategory, PackageState
 
 logger = logging.getLogger(__name__)
 
@@ -117,18 +118,59 @@ class GeminiProvider:
         )
 
 
+#: Stub modunun (VISION_PROVIDER=stub) varsayılan yanıtı. Gemini anahtarı
+#: olmadan arayüzü test etmek için, her biri kutulu birkaç örnek ürün döner —
+#: böylece "kutuya göre kırpma" akışı yerelde uçtan uca denenebilir. Kutular
+#: 0-1000 ölçeğinde, fotoğrafın farklı çeyreklerine yayılmıştır; yüklenen
+#: gerçek görselin neresine denk geldikleri önemli değil, amaç mekanizmayı
+#: doğrulamak. Gerçek/hizalı kutular yalnızca gerçek Gemini çağrısından gelir.
+_STUB_FOODS: list[ExtractedFood] = [
+    ExtractedFood(
+        name="süt",
+        brand="Sütaş",
+        raw_label="Sütaş Günlük Süt 1L",
+        category=FoodCategory.DAIRY,
+        subcategory="milk_fresh",
+        package_state=PackageState.UNOPENED,
+        quantity=Quantity(value=1, unit="bottle"),
+        confidence=FieldConfidence(name=0.92, category=0.96),
+        bounding_box=BoundingBox(ymin=120, xmin=60, ymax=640, xmax=340),
+    ),
+    ExtractedFood(
+        name="domates",
+        category=FoodCategory.PRODUCE_VEGETABLE,
+        subcategory="tomato",
+        package_state=PackageState.OPENED,
+        quantity=Quantity(value=3, unit="piece"),
+        confidence=FieldConfidence(name=0.81, category=0.88),
+        bounding_box=BoundingBox(ymin=420, xmin=520, ymax=760, xmax=880),
+    ),
+    ExtractedFood(
+        name="kaşar peyniri",
+        brand=None,
+        category=FoodCategory.DAIRY,
+        subcategory="cheese_hard",
+        package_state=PackageState.UNKNOWN,
+        quantity=Quantity(value=1, unit="pack"),
+        confidence=FieldConfidence(name=0.55, category=0.6),
+        bounding_box=BoundingBox(ymin=140, xmin=600, ymax=380, xmax=940),
+    ),
+]
+
+
 class StubVisionProvider:
     """Testler ve uçtan uca akışı Gemini'siz denemek için sabit yanıt döner.
 
     `handlers/extractor.py` bunu `VISION_PROVIDER=stub` ortam değişkeniyle
     devreye alabilir — gerçek bir Gemini anahtarı olmadan uçtan uca akış
-    doğrulanabilsin.
+    doğrulanabilsin. Açık `foods` verilmezse kutulu `_STUB_FOODS` döner; böylece
+    stub modunda arayüz kırpma akışını test edecek veriye sahip olur.
     """
 
     model_id = "stub-vision-0"
 
     def __init__(self, foods: list[ExtractedFood] | None = None) -> None:
-        self._foods = foods or []
+        self._foods = _STUB_FOODS if foods is None else foods
 
     def extract(self, image_bytes: bytes, mime_type: str) -> VisionResult:
         return VisionResult(foods=list(self._foods), model_id=self.model_id, latency_ms=0)

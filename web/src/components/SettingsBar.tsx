@@ -1,19 +1,21 @@
 import { useId, useState } from "react";
-import type { ApiConfig } from "../api/client";
+import type { DeploySettings } from "../hooks/useSettings";
 
 interface SettingsBarProps {
-  config: ApiConfig;
-  onChange: (next: Partial<ApiConfig>) => void;
+  config: DeploySettings;
+  onChange: (next: Partial<DeploySettings>) => void;
 }
 
 /**
- * Kimlik doğrulama yok; bu panel API adresini ve hangi kullanıcı gibi
- * davranılacağını (`x-user-id`) elle girmeyi sağlar.
+ * Bu deploy'a özel bağlantı bilgileri: API adresi ve Cognito Hosted UI
+ * domain/client ID'si (CDK çıktıları `ApiUrl`, `CognitoDomain`,
+ * `WebTestClientId`). Kimlik doğrulama burada değil, `useAuth`/Cognito'da olur.
  */
 export function SettingsBar({ config, onChange }: SettingsBarProps) {
-  const [isOpen, setIsOpen] = useState(!config.baseUrl);
+  const [isOpen, setIsOpen] = useState(!config.baseUrl || !config.cognitoDomain);
   const urlId = useId();
-  const userId = useId();
+  const domainId = useId();
+  const clientId = useId();
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -30,8 +32,8 @@ export function SettingsBar({ config, onChange }: SettingsBarProps) {
 
       {isOpen && (
         <div className="grid gap-3 border-t border-slate-100 px-4 py-3 sm:grid-cols-2 dark:border-slate-800">
-          <label htmlFor={urlId} className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-600 dark:text-slate-400">API adresi</span>
+          <label htmlFor={urlId} className="flex flex-col gap-1 text-sm sm:col-span-2">
+            <span className="text-slate-600 dark:text-slate-400">API adresi (CDK çıktısı: ApiUrl)</span>
             <input
               id={urlId}
               type="url"
@@ -41,13 +43,24 @@ export function SettingsBar({ config, onChange }: SettingsBarProps) {
               className="rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-xs outline-none focus:border-slate-500 dark:border-slate-700 dark:bg-slate-950"
             />
           </label>
-          <label htmlFor={userId} className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-600 dark:text-slate-400">Kullanıcı (x-user-id)</span>
+          <label htmlFor={domainId} className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-600 dark:text-slate-400">Cognito domain (CognitoDomain)</span>
             <input
-              id={userId}
+              id={domainId}
+              type="url"
+              placeholder="https://fridge-123456789012.auth.eu-central-1.amazoncognito.com"
+              value={config.cognitoDomain}
+              onChange={(e) => onChange({ cognitoDomain: e.target.value })}
+              className="rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-xs outline-none focus:border-slate-500 dark:border-slate-700 dark:bg-slate-950"
+            />
+          </label>
+          <label htmlFor={clientId} className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-600 dark:text-slate-400">Cognito client ID (WebTestClientId)</span>
+            <input
+              id={clientId}
               type="text"
-              value={config.userId}
-              onChange={(e) => onChange({ userId: e.target.value })}
+              value={config.cognitoClientId}
+              onChange={(e) => onChange({ cognitoClientId: e.target.value })}
               className="rounded-md border border-slate-300 px-2.5 py-1.5 font-mono text-xs outline-none focus:border-slate-500 dark:border-slate-700 dark:bg-slate-950"
             />
           </label>
