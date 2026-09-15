@@ -1,0 +1,71 @@
+name: Deploy cloud stage
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Deployment stage
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloud-deploy-${{ inputs.stage }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -r infra/requirements.txt
+          npm install -g aws-cdk
+
+      - name: Verify backend
+        run: |
+          ruff check .
+          ruff format --check .
+          pytest tests/unit tests/integration
+
+      - name: Build Lambda packages
+        run: python infra/scripts/build_lambda_packages.py
+
+      - name: Synthesize stack
+        working-directory: infra
+        run: cdk synth -c stage=${{ inputs.stage }} -c budget_alert_email=${{ vars.BUDGET_ALERT_EMAIL }}
+
+      - name: Deploy stack
+        working-directory: infra
+        run: cdk deploy FridgeStack${{ inputs.stage == 'prod' && 'Prod' || 'Staging' }} --require-approval never -c stage=${{ inputs.stage }} -c budget_alert_email=${{ vars.BUDGET_ALERT_EMAIL }}

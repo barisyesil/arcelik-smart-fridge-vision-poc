@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "feature/**"]
   pull_request:
     branches: [main, develop]
 
@@ -58,10 +58,18 @@ jobs:
       - name: Lambda paketlerini derle
         run: python infra/scripts/build_lambda_packages.py
 
-      - name: cdk synth
+      - name: cdk synth (dev)
         working-directory: infra
         # Bütçe e-postası synth için zorunlu bir bağlam değeri; CI'da yer tutucu.
-        run: cdk synth -c budget_alert_email=ci@example.com
+        run: cdk synth -c stage=dev -c budget_alert_email=ci@example.com
+
+      - name: cdk synth (staging)
+        working-directory: infra
+        run: cdk synth -c stage=staging -c budget_alert_email=ci@example.com
+
+      - name: cdk synth (production)
+        working-directory: infra
+        run: cdk synth -c stage=prod -c budget_alert_email=ci@example.com
 
   web:
     name: Web (tip + derleme + lint)

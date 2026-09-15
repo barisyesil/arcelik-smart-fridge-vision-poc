@@ -2,7 +2,9 @@
 
 Tüm altyapı Python ile yazılmış tek bir AWS CDK stack'idir
 ([`stacks/fridge_stack.py`](stacks/fridge_stack.py)). `cdk deploy` ile kurulur,
-`cdk destroy` ile tamamen silinir. Bölge sabittir: **eu-central-1 (Frankfurt)**.
+dev ve staging ortamları `cdk destroy` ile silinebilir. Production verileri
+stack silinse bile `RETAIN` politikasıyla korunur. Bölge sabittir:
+**eu-central-1 (Frankfurt)**.
 
 ![Mimari boru hattı](../docs/images/mimari-pipeline.jpg)
 
@@ -19,6 +21,7 @@ Tüm altyapı Python ile yazılmış tek bir AWS CDK stack'idir
 | 6.5 | Cognito User Pool + 2 client + Hosted UI domain | Mobil client (deep-link) + web test client (localhost); JWT authorizer bu havuzu kullanır |
 | 7 | HTTP API `fridge-api-gw` | 24 rota, tümü JWT authorizer arkasında, throttling 5 rps / burst 10, CORS kısıtlı |
 | 8 | Budget 5 USD | %80 ve %100 eşiklerinde e-posta alarmı |
+| 8.5 | CloudWatch alarms | API/extractor errors, API Gateway 5xx ve görünür DLQ mesajı |
 | 9 | IAM rolleri (×2) | Kaynak bazlı, wildcard yok |
 | 10 | Fridge registry seed | `AwsCustomResource` ile 3 prototip buzdolabı ID'si (`ARC-FRIDGE-001..003`) her deploy'da yazılır |
 
@@ -64,7 +67,7 @@ oluşturulamaz (değer şifresiz olarak stack state'ine düşerdi); bu yüzden e
 
 ```bash
 aws ssm put-parameter \
-  --name /smartfridge/dev/gemini-api-key \
+  --name /smartfridge/<stage>/gemini-api-key \
   --type SecureString \
   --value "GEMINI_ANAHTARIN" \
   --region eu-central-1
@@ -86,24 +89,32 @@ hata ile durur.
 
 ```bash
 cdk bootstrap
-cdk deploy -c budget_alert_email=ekip@ornek.com
+cdk deploy -c stage=dev -c budget_alert_email=ekip@ornek.com
 ```
 
-`budget_alert_email` her `synth`/`deploy`'da verilmelidir; kişisel adres git
+`stage` değeri `dev`, `staging` veya `prod` olabilir. Dev adları mevcut stack ile
+geriye dönük uyumludur; diğer ortamların tablo, bucket, Lambda, Cognito, kuyruk,
+log ve budget adları stage son ekiyle ayrılır. `budget_alert_email` her
+`synth`/`deploy`'da verilmelidir; kişisel adres git
 geçmişine girmesin diye `cdk.json`'a gömülmemiştir.
 
-### 4. Konsolda, deploy'dan sonra — CloudWatch alarmları
+Production ve staging dağıtımları normalde `Deploy cloud stage` GitHub Actions
+iş akışıyla yapılır. Ortam koruma kuralı, OIDC rolü (`AWS_DEPLOY_ROLE_ARN`) ve
+budget adresi (`BUDGET_ALERT_EMAIL`) GitHub Environment ayarlarında tanımlanır.
+Production environment en az bir zorunlu onaylayıcı gerektirmelidir.
 
-Log grupları stack'te tanımlıdır; alarmlar konsoldan kurulur. Önce bir SNS
-konusu (`smartfridge-alarms`) oluşturup e-posta aboneliğini onayla, sonra şu
-alarmları ekle (Period 5 dk, eksik veri = "iyi/breaching değil"):
+### 4. Deploy'dan sonra — CloudWatch alarmları
+
+Log grupları ve aşağıdaki alarmlar stack'te tanımlıdır. Alarm aksiyonları hesap
+ve ortam yönetimine bırakılmıştır; mevcut SNS/PagerDuty hedefleri dağıtımdan
+sonra alarm action olarak bağlanmalıdır. Tüm metrikler beş dakikalık periyot ve
+eksik veri = `notBreaching` kullanır.
 
 | Metrik | Boyut | İstatistik | Eşik |
 |---|---|---|---|
-| Lambda Errors | `fridge-extractor` | Sum | > 5 |
-| Lambda Throttles | `fridge-extractor` | Sum | > 0 |
-| Lambda Duration | `fridge-extractor` | p95 | > 30000 ms |
-| SQS ApproximateNumberOfMessagesVisible | `fridge-extractor-dlq` | Maximum | > 0 |
+| Lambda Errors | `fridge-api`, `fridge-extractor` | Sum | >= 1 |
+| API Gateway 5xx | stage API ID | Sum | >= 1 |
+| SQS ApproximateNumberOfMessagesVisible | stage extractor DLQ | Maximum | >= 1 |
 
 En kritik olan sonuncusudur: DLQ'da mesaj varsa iş kaybı var demektir.
 
@@ -151,15 +162,15 @@ allowlist'i farklıdır (web: `http://localhost:5173/auth/callback`, mobil:
 ## Silme
 
 ```bash
-cdk destroy
+cdk destroy -c stage=dev -c budget_alert_email=ekip@ornek.com
 ```
 
-Tüm kaynaklar `removalPolicy=DESTROY` ile tanımlıdır (Cognito User Pool dahil);
-stack silindiğinde geride kaynak kalmaz. SSM parametresi elle oluşturulduğu
-için elle silinir:
+Dev ve staging kaynakları `DESTROY`, production kaynakları `RETAIN` ile
+tanımlıdır. SSM parametresi stack tarafından yalnızca referans alındığı için
+her ortamda elle yönetilir:
 
 ```bash
-aws ssm delete-parameter --name /smartfridge/dev/gemini-api-key --region eu-central-1
+aws ssm delete-parameter --name /smartfridge/<stage>/gemini-api-key --region eu-central-1
 ```
 
 ## Tasarım notu — dairesel bağımlılık

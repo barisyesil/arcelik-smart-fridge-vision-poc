@@ -272,6 +272,17 @@ class TestShoppingAndCandidates:
         assert shopping["active"] == []
         assert len(shopping["completed"]) == 1
 
+    def test_offline_shopping_retry_is_idempotent(self, api):
+        inventory_api, _ = api
+        payload = {"client_item_id": "shopping-offline-1", "name": "yoğurt"}
+        first = _call(inventory_api, "POST /v1/shopping-lists/current/items", body=payload)
+        second = _call(inventory_api, "POST /v1/shopping-lists/current/items", body=payload)
+
+        assert first["statusCode"] == 201
+        assert second["statusCode"] == 201
+        shopping = json.loads(_call(inventory_api, "GET /v1/shopping-lists/current")["body"])
+        assert [item["shopping_item_id"] for item in shopping["active"]] == ["shopping-offline-1"]
+
 
 class TestPreferencesAndDevices:
     def test_update_notification_preferences(self, api):
@@ -298,6 +309,32 @@ class TestPreferencesAndDevices:
             path={"installation_id": "inst-1"},
         )
         assert remove["statusCode"] == 204
+
+    def test_item_reminder_updates_review_queue_flags(self, api, s3_client):
+        inventory_api, _ = api
+        item_id = _seed_item(api, s3_client)
+        scheduled_at = "2026-09-20T09:00:00+00:00"
+
+        saved = _call(
+            inventory_api,
+            "PUT /v1/items/{item_id}/reminder",
+            path={"item_id": item_id},
+            body={"scheduled_at": scheduled_at},
+        )
+        assert saved["statusCode"] == 200
+        item = json.loads(_call(inventory_api, "GET /v1/items")["body"])["items"][0]
+        assert item["user_requested_review"] is True
+        assert item["next_review_at"] == scheduled_at
+
+        removed = _call(
+            inventory_api,
+            "DELETE /v1/items/{item_id}/reminder",
+            path={"item_id": item_id},
+        )
+        assert removed["statusCode"] == 204
+        item = json.loads(_call(inventory_api, "GET /v1/items")["body"])["items"][0]
+        assert item["user_requested_review"] is False
+        assert item["next_review_at"] is None
 
 
 class TestRecipes:
