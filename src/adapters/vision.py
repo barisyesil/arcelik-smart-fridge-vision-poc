@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from core.extraction import PROMPT_VERSION, SYSTEM_PROMPT, build_response_schema, parse_extraction
@@ -29,9 +31,33 @@ logger = logging.getLogger(__name__)
 _TEMPERATURE = 0.1
 _DEFAULT_TIMEOUT_S = 45
 
+#: Gemini ara sıra geçici hata döndürür — özellikle 503 Service Unavailable
+#: (5xx) ve 429 (kota/hız limiti). Bunlar genellikle birkaç saniye içinde
+#: kendiliğinden düzelir; tek denemede "VisionError" fırlatıp fotoğrafı
+#: DLQ'ya göndermek yerine üssel geri çekilmeyle (jitter'lı) yeniden deneriz.
+#: Kalıcı hatalar (400 gibi) yeniden denenmez, anında fırlatılır. Toplam süre
+#: extractor Lambda timeout'una (bkz. infra) sığacak şekilde seçilmeli:
+#: en kötü durumda max_attempts * timeout_s + backoff toplamı < Lambda timeout.
+_DEFAULT_MAX_ATTEMPTS = 3
+_DEFAULT_RETRY_BASE_S = 1.5
+
 
 class VisionError(RuntimeError):
     """Sağlayıcıdan kullanılabilir bir çıkarım alınamadı."""
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Hata geçici mi (yeniden denemeye değer mi)?
+
+    `ServerError` tüm 5xx'i kapsar (503 Service Unavailable dahil) — sunucu
+    tarafı, geçici. `ClientError` içinden yalnız 429 (kota/hız limiti) geçicidir;
+    diğer 4xx'ler (400 hatalı istek, 403 yetki) tekrar denemekle düzelmez.
+    """
+    if isinstance(exc, genai_errors.ServerError):
+        return True
+    if isinstance(exc, genai_errors.ClientError):
+        return getattr(exc, "code", None) == 429
+    return False
 
 
 @dataclass(frozen=True)
@@ -66,7 +92,14 @@ class GeminiProvider:
 
     model_id = "gemini-2.5-flash"
 
-    def __init__(self, api_key: str, *, timeout_s: int = _DEFAULT_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        timeout_s: int = _DEFAULT_TIMEOUT_S,
+        max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+        retry_base_delay_s: float = _DEFAULT_RETRY_BASE_S,
+    ) -> None:
         http_options = types.HttpOptions(timeout=timeout_s * 1000)
         self._client = genai.Client(api_key=api_key, http_options=http_options)
         self._config = types.GenerateContentConfig(
@@ -75,22 +108,49 @@ class GeminiProvider:
             response_schema=build_response_schema(),
             temperature=_TEMPERATURE,
         )
+        self._max_attempts = max(1, max_attempts)
+        self._retry_base_delay_s = max(0.0, retry_base_delay_s)
+
+    def _generate_with_retry(self, image_bytes: bytes, mime_type: str):
+        """Gemini'yi çağır; geçici hatada üssel backoff'la yeniden dene.
+
+        Geçici hatalarda (503/5xx, 429) `max_attempts`'a kadar tekrar dener;
+        her denemeden sonra `retry_base_delay_s * 2**n` + jitter kadar bekler.
+        Kalıcı hatada ya da denemeler tükenince `VisionError` fırlatır. Görsel
+        içeriği veya tam yanıt ASLA loglanmaz — yalnızca metadata.
+        """
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                return self._client.models.generate_content(
+                    model=self.model_id,
+                    contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type)],
+                    config=self._config,
+                )
+            except Exception as exc:  # noqa: BLE001 — sağlayıcı hatalarını tek yerde yakala
+                transient = _is_transient(exc)
+                will_retry = transient and attempt < self._max_attempts
+                logger.warning(
+                    json.dumps(
+                        {
+                            "event": "gemini_call_failed",
+                            "error_type": type(exc).__name__,
+                            "attempt": attempt,
+                            "max_attempts": self._max_attempts,
+                            "will_retry": will_retry,
+                        }
+                    )
+                )
+                if not will_retry:
+                    raise VisionError(f"Gemini çağrısı başarısız: {type(exc).__name__}") from exc
+                delay = self._retry_base_delay_s * (2 ** (attempt - 1))
+                delay += random.uniform(0.0, self._retry_base_delay_s)  # jitter — eşzamanlı
+                time.sleep(delay)  # invoke'ların aynı anda yeniden denemesini dağıtır
+        # Döngü ya değer döndürür ya da fırlatır; buraya ulaşılmaz (tip güvenliği).
+        raise VisionError("Gemini çağrısı başarısız: denemeler tükendi")
 
     def extract(self, image_bytes: bytes, mime_type: str) -> VisionResult:
         started = time.monotonic()
-        try:
-            response = self._client.models.generate_content(
-                model=self.model_id,
-                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type)],
-                config=self._config,
-            )
-        except Exception as exc:  # noqa: BLE001 — sağlayıcı hatalarını tek yerde yakala
-            # Görsel içeriğini veya tam yanıtı loglama, sadece metadata.
-            logger.warning(
-                json.dumps({"event": "gemini_call_failed", "error_type": type(exc).__name__})
-            )
-            raise VisionError(f"Gemini çağrısı başarısız: {type(exc).__name__}") from exc
-
+        response = self._generate_with_retry(image_bytes, mime_type)
         latency_ms = int((time.monotonic() - started) * 1000)
 
         try:

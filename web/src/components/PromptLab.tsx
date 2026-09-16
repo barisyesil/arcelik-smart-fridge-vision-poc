@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ExtractResult, LabProduct, PromptVersion } from "../api/playground";
 import { usePromptLab } from "../hooks/usePromptLab";
-import { buildCropStyle, loadImageSize } from "../lib/cropImage";
+import { CROP_ASPECT_OPTIONS, buildCropStyle, loadImageSize, padBoxToAspect } from "../lib/cropImage";
 import { categoryLabel, formatQuantity, packageStateLabel } from "../lib/labels";
 
 interface PromptLabProps {
   onExit: () => void;
+}
+
+/** media_resolution anahtarını okunur Türkçe etikete çevirir. */
+function resolutionLabel(key: string): string {
+  const labels: Record<string, string> = {
+    default: "Varsayılan (SDK)",
+    low: "Düşük — az token/ucuz",
+    medium: "Orta",
+    high: "Yüksek — en iyi tanıma/kutu",
+  };
+  return labels[key] ?? key;
 }
 
 /**
@@ -20,6 +31,9 @@ export function PromptLab({ onExit }: PromptLabProps) {
   const [dirty, setDirty] = useState(false);
   const [model, setModel] = useState<string>("gemini-2.5-flash");
   const [temperature, setTemperature] = useState(0.1);
+  const [mediaResolution, setMediaResolution] = useState<string>("default");
+  const [thinking, setThinking] = useState<string>("default");
+  const [cropAspectKey, setCropAspectKey] = useState<string>("3:4");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -48,6 +62,14 @@ export function PromptLab({ onExit }: PromptLabProps) {
     if (lab.meta?.default_model) setModel(lab.meta.default_model);
   }, [lab.meta]);
 
+  useEffect(() => {
+    if (lab.meta?.default_media_resolution) setMediaResolution(lab.meta.default_media_resolution);
+  }, [lab.meta]);
+
+  useEffect(() => {
+    if (lab.meta?.default_thinking) setThinking(lab.meta.default_thinking);
+  }, [lab.meta]);
+
   const onPickFile = (f: File | null) => {
     setFile(f);
     setPreviewUrl((old) => {
@@ -65,6 +87,8 @@ export function PromptLab({ onExit }: PromptLabProps) {
       systemPrompt: dirty ? promptText : undefined,
       model,
       temperature,
+      mediaResolution,
+      thinkingBudget: thinking,
     });
   };
 
@@ -238,6 +262,72 @@ export function PromptLab({ onExit }: PromptLabProps) {
             </div>
           </div>
 
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Görsel çözünürlüğü (media_resolution)
+            </label>
+            <select
+              value={mediaResolution}
+              onChange={(e) => setMediaResolution(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            >
+              {(lab.meta?.media_resolutions ?? ["default"]).map((r) => (
+                <option key={r} value={r}>
+                  {resolutionLabel(r)}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-400">
+              Yüksek çözünürlük küçük/arka ürünleri daha iyi tanır ve kutuları hizalar ama
+              daha çok token/maliyet demektir. Aynı fotoğrafı farklı seçeneklerle çalıştırıp
+              aşağıdaki token + maliyet kartlarıyla karşılaştır.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Düşünme (thinking)
+            </label>
+            <select
+              value={thinking}
+              onChange={(e) => setThinking(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            >
+              {(lab.meta?.thinking_options ?? ["default", "off"]).map((t) => (
+                <option key={t} value={t}>
+                  {t === "off" ? "Kapalı (0 token)" : "Varsayılan (model karar verir)"}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-400">
+              Gemini 2.5 gizli "düşünme" tokenları üretir ve bunlar çıktı fiyatından
+              faturalanır — toplam token'ın büyük kısmı bu olabilir. Bu yapılandırılmış
+              çıkarım görevi genelde düşünmeye ihtiyaç duymaz; kapatmak en büyük maliyet
+              kaldıracıdır. Aç/kapa çalıştırıp aşağıdaki "düşünme" token'ını karşılaştır.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Crop en-boy oranı (mobil kart formatı)
+            </label>
+            <select
+              value={cropAspectKey}
+              onChange={(e) => setCropAspectKey(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            >
+              {CROP_ASPECT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-400">
+              Yalnız GÖSTERİM: modelin kutusunu değiştirmez, kırpmayı mobilde kullandığın
+              orana genişletir (%8 pay). Sağdaki kırpılmış görseller bu oranda görünür.
+            </p>
+          </div>
+
           <div className="flex flex-col gap-2">
             <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Görsel</label>
             <button
@@ -270,7 +360,11 @@ export function PromptLab({ onExit }: PromptLabProps) {
 
         {/* Sağ: sonuç */}
         <section className="flex flex-col gap-4">
-          <ResultView result={lab.result} previewUrl={previewUrl} />
+          <ResultView
+            result={lab.result}
+            previewUrl={previewUrl}
+            cropRatio={CROP_ASPECT_OPTIONS.find((o) => o.key === cropAspectKey)?.ratio ?? null}
+          />
         </section>
       </div>
     </div>
@@ -334,9 +428,11 @@ function ServerBar({
 function ResultView({
   result,
   previewUrl,
+  cropRatio,
 }: {
   result: ExtractResult | null;
   previewUrl: string | null;
+  cropRatio: number | null;
 }) {
   // Kırpma için kaynak görselin doğal boyutu gerekir (kutunun en-boy oranını
   // doğru kurmak için). previewUrl değişince yeniden ölç. Hook'lar erken
@@ -367,7 +463,12 @@ function ResultView({
   const usd = (n: number) => `$${n.toFixed(6)}`;
   const cropStyleFor = (p: LabProduct): CSSProperties | null =>
     previewUrl && imgSize && p.bounding_box
-      ? buildCropStyle(previewUrl, p.bounding_box, imgSize.width, imgSize.height)
+      ? buildCropStyle(
+          previewUrl,
+          padBoxToAspect(p.bounding_box, cropRatio, imgSize.width, imgSize.height, 0.08),
+          imgSize.width,
+          imgSize.height,
+        )
       : null;
 
   return (
@@ -383,10 +484,29 @@ function ResultView({
           hint={result.cost.model_known ? result.cost.note : "model fiyatı bilinmiyor"}
         />
       </div>
-      <div className="grid grid-cols-3 gap-2 text-center text-xs text-slate-500 dark:text-slate-400">
-        <span>girdi: {result.usage.prompt_tokens} tok · {usd(result.cost.input_usd)}</span>
-        <span>çıktı: {result.usage.output_tokens} tok · {usd(result.cost.output_usd)}</span>
-        <span>{result.model} · sıc. {result.temperature}</span>
+      {/* Token dökümü — toplam = girdi + çıktı + düşünme. "Düşünme" gizli
+          thinking tokenlarıdır: görünür çıktıda YOK ama toplama dahil ve çıktı
+          fiyatından faturalanır. prompt+output != total ise fark budur. */}
+      <div className="grid grid-cols-2 gap-2 text-center text-xs text-slate-500 sm:grid-cols-4 dark:text-slate-400">
+        <span>girdi: {result.usage.prompt_tokens} tok</span>
+        <span>çıktı: {result.usage.output_tokens} tok</span>
+        <span
+          className={
+            result.usage.thoughts_tokens > 0 ? "font-medium text-amber-600 dark:text-amber-400" : ""
+          }
+        >
+          düşünme: {result.usage.thoughts_tokens} tok
+        </span>
+        <span>toplam: {result.usage.total_tokens} tok</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-center text-[11px] text-slate-400 sm:grid-cols-3">
+        <span>girdi maliyeti: {usd(result.cost.input_usd)}</span>
+        <span>çıktı+düşünme: {usd(result.cost.output_usd)}</span>
+        <span>
+          {result.model} · sıc. {result.temperature} · çöz.{" "}
+          {resolutionLabel(result.media_resolution)} · düşünme{" "}
+          {result.thinking_budget === 0 ? "kapalı" : "varsayılan"}
+        </span>
       </div>
 
       {previewUrl && <BoxPreview src={previewUrl} products={result.products} />}

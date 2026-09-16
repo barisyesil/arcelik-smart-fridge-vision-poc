@@ -11,17 +11,37 @@
  */
 
 import type { BoundingBox } from "../api/types";
+import { padBoxToAspect } from "./cropImage";
 
 const COORD_MAX = 1000;
 const CROP_QUALITY = 0.8;
 
-export async function cropToBlob(source: Blob, box: BoundingBox): Promise<Blob> {
+/**
+ * `shape`: mobilde ürün kartları 3:4/9:16 gösterildiği için kırpmayı o orana
+ * genişletir (bkz. `padBoxToAspect`). `ratio=null` → modelin kutusu aynen. Oran
+ * hesabı gerçek piksellerde yapılır; burada bitmap boyutları kullanılır.
+ */
+export async function cropToBlob(
+  source: Blob,
+  box: BoundingBox,
+  shape: { ratio: number | null; marginFrac?: number } = { ratio: null },
+): Promise<Blob> {
   const bitmap = await createImageBitmap(source);
   try {
-    const left = Math.round((box.xmin / COORD_MAX) * bitmap.width);
-    const top = Math.round((box.ymin / COORD_MAX) * bitmap.height);
-    const width = Math.max(1, Math.round(((box.xmax - box.xmin) / COORD_MAX) * bitmap.width));
-    const height = Math.max(1, Math.round(((box.ymax - box.ymin) / COORD_MAX) * bitmap.height));
+    const shaped = padBoxToAspect(
+      box,
+      shape.ratio,
+      bitmap.width,
+      bitmap.height,
+      shape.marginFrac ?? 0,
+    );
+    const left = Math.round((shaped.xmin / COORD_MAX) * bitmap.width);
+    const top = Math.round((shaped.ymin / COORD_MAX) * bitmap.height);
+    const width = Math.max(1, Math.round(((shaped.xmax - shaped.xmin) / COORD_MAX) * bitmap.width));
+    const height = Math.max(
+      1,
+      Math.round(((shaped.ymax - shaped.ymin) / COORD_MAX) * bitmap.height),
+    );
 
     const canvas = document.createElement("canvas");
     canvas.width = width;

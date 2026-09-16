@@ -27,7 +27,7 @@ from core.taxonomy import (
 )
 from playground import pricing as pricing_mod
 from playground import prompts as prompts_mod
-from playground.gemini import PlaygroundGeminiError, run_extraction
+from playground.gemini import PlaygroundGeminiError, media_resolution_keys, run_extraction
 
 app = FastAPI(title="Smart Fridge — Prompt Lab", version="1.0.0")
 
@@ -78,6 +78,15 @@ def meta() -> dict:
         ],
         "default_model": "gemini-2.5-flash",
         "default_prompt_id": versions[0].id if versions else None,
+        # Görsel token çözünürlüğü seçenekleri: "default" (SDK varsayılanı) +
+        # low/medium/high. UI A/B karşılaştırması için bunları seçtirir.
+        "media_resolutions": media_resolution_keys(),
+        "default_media_resolution": "default",
+        # Düşünme (thinking) seçenekleri. "default" = model varsayılanı, "off" =
+        # kapalı (0 token). Gemini 2.5'te gizli düşünme tokenları çıktı fiyatından
+        # faturalanır; kapatmak en büyük maliyet kaldıracıdır.
+        "thinking_options": ["default", "off"],
+        "default_thinking": "default",
         "has_api_key": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
     }
 
@@ -122,6 +131,8 @@ async def extract(
     system_prompt: str | None = Form(default=None),
     model: str = Form(default="gemini-2.5-flash"),
     temperature: float = Form(default=0.1),
+    media_resolution: str = Form(default="default"),
+    thinking_budget: str = Form(default="default"),
 ) -> dict:
     """Görseli seçilen/verilen promptla Gemini'ye gönder; her şeyi geri döndür.
 
@@ -159,6 +170,19 @@ async def extract(
     except (TypeError, ValueError):
         temp = 0.1
 
+    # 3b) Düşünme bütçesini çöz: "default"/"" -> None (dokunma), "off"/"0" -> 0,
+    #     sayı -> üst sınır. Geçersiz -> None.
+    tb_raw = (thinking_budget or "").strip().lower()
+    if tb_raw in ("", "default"):
+        thinking: int | None = None
+    elif tb_raw in ("off", "0"):
+        thinking = 0
+    else:
+        try:
+            thinking = max(0, int(tb_raw))
+        except (TypeError, ValueError):
+            thinking = None
+
     # 4) Çalıştır.
     try:
         run = run_extraction(
@@ -168,18 +192,23 @@ async def extract(
             system_prompt=resolved_prompt,
             model=model,
             temperature=temp,
+            media_resolution=media_resolution,
+            thinking_budget=thinking,
         )
     except PlaygroundGeminiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    cost = pricing_mod.estimate_cost(
-        run.model, run.usage["prompt_tokens"], run.usage["output_tokens"]
-    )
+    # Maliyet: gizli düşünme (thoughts) tokenları da ÇIKTI fiyatından faturalanır,
+    # bu yüzden görünür çıktı + thoughts toplamıyla hesapla — yoksa maliyet eksik çıkar.
+    billed_output = run.usage["output_tokens"] + run.usage.get("thoughts_tokens", 0)
+    cost = pricing_mod.estimate_cost(run.model, run.usage["prompt_tokens"], billed_output)
 
     return {
         "prompt_id": used_prompt_id,
         "model": run.model,
         "temperature": run.temperature,
+        "media_resolution": run.media_resolution,
+        "thinking_budget": run.thinking_budget,
         "latency_ms": run.latency_ms,
         "product_count": len(run.products),
         "products": run.products,

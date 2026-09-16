@@ -29,6 +29,13 @@ def test_meta_lists_new_units_and_prompt(client):
     assert any(m["id"] == "gemini-2.5-flash" for m in body["models"])
 
 
+def test_meta_lists_media_resolutions(client):
+    """UI, görsel çözünürlüğü A/B seçicisi için bu anahtarları kullanır."""
+    body = client.get("/playground/meta").json()
+    assert body["default_media_resolution"] == "default"
+    assert body["media_resolutions"] == ["default", "low", "medium", "high"]
+
+
 def test_prompts_include_production_first(client):
     versions = client.get("/playground/prompts").json()["versions"]
     assert versions[0]["is_production"] is True

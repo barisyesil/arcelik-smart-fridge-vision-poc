@@ -22,6 +22,88 @@ import type { BoundingBox } from "../api/types";
 const COORD_MAX = 1000;
 
 /**
+ * Mobil kart formatları için hedef en-boy oranı seçenekleri (genişlik/yükseklik,
+ * PİKSEL bazında). Gemini'nin döndürdüğü kutu ürüne "tam otursa" bile mobilde
+ * 3:4 / 9:16 kartlarda gösterildiği için, kırpmayı bu orana genişleterek
+ * kartın kenarlarında tuhaf boşluk/kırpılma oluşmasını engelleriz. "tight" =
+ * modelin verdiği kutuyu olduğu gibi kullan (genişletme yok).
+ */
+export const CROP_ASPECT_OPTIONS: { key: string; label: string; ratio: number | null }[] = [
+  { key: "tight", label: "Kutuya tam (tight)", ratio: null },
+  { key: "3:4", label: "3:4 (mobil kart)", ratio: 3 / 4 },
+  { key: "9:16", label: "9:16 (dikey)", ratio: 9 / 16 },
+  { key: "1:1", label: "1:1 (kare)", ratio: 1 },
+];
+
+/**
+ * Bir bounding box'ı (0-1000) hedef PİKSEL en-boy oranına genişletir + isteğe
+ * bağlı kenar payı ekler. Kutu YALNIZCA büyütülür (içerik kırpılmaz): dar olan
+ * kenar, hedef orana ulaşana dek merkez etrafında açılır. Görsel sınırlarını
+ * aşarsa önce pencere içeri kaydırılır, sığmıyorsa boyut sınıra çekilir.
+ *
+ * box_2d her iki eksende 0-1000'e AYRI normalize olduğu için oran hesabı piksel
+ * uzayında yapılmalı — bu yüzden görselin gerçek en/boy'u gerekir. `ratio=null`
+ * ise kutu değiştirilmeden döner.
+ */
+export function padBoxToAspect(
+  box: BoundingBox,
+  ratio: number | null,
+  imageWidth: number,
+  imageHeight: number,
+  marginFrac = 0,
+): BoundingBox {
+  if (!ratio || imageWidth <= 0 || imageHeight <= 0) return box;
+
+  const pxX = imageWidth / COORD_MAX;
+  const pxY = imageHeight / COORD_MAX;
+  let leftPx = box.xmin * pxX;
+  let topPx = box.ymin * pxY;
+  let wPx = (box.xmax - box.xmin) * pxX;
+  let hPx = (box.ymax - box.ymin) * pxY;
+
+  // 1) Kenar payı — merkez etrafında büyüt.
+  const addW = wPx * marginFrac;
+  const addH = hPx * marginFrac;
+  leftPx -= addW / 2;
+  topPx -= addH / 2;
+  wPx += addW;
+  hPx += addH;
+
+  // 2) Hedef orana ulaşana dek DAR kenarı aç (asla küçültme).
+  const cx = leftPx + wPx / 2;
+  const cy = topPx + hPx / 2;
+  if (wPx / hPx < ratio) {
+    wPx = hPx * ratio;
+  } else {
+    hPx = wPx / ratio;
+  }
+
+  // 3) Görselden büyükse boyutu sınıra çek (oranı koru).
+  if (wPx > imageWidth) {
+    wPx = imageWidth;
+    hPx = wPx / ratio;
+  }
+  if (hPx > imageHeight) {
+    hPx = imageHeight;
+    wPx = hPx * ratio;
+  }
+
+  // 4) Pencereyi merkezle, sonra sınır içine kaydır.
+  leftPx = cx - wPx / 2;
+  topPx = cy - hPx / 2;
+  leftPx = Math.max(0, Math.min(leftPx, imageWidth - wPx));
+  topPx = Math.max(0, Math.min(topPx, imageHeight - hPx));
+
+  const clamp = (v: number) => Math.max(0, Math.min(COORD_MAX, Math.round(v)));
+  return {
+    xmin: clamp((leftPx / imageWidth) * COORD_MAX),
+    ymin: clamp((topPx / imageHeight) * COORD_MAX),
+    xmax: clamp(((leftPx + wPx) / imageWidth) * COORD_MAX),
+    ymax: clamp(((topPx + hPx) / imageHeight) * COORD_MAX),
+  };
+}
+
+/**
  * Kaynak görselin doğal boyutunu okur. `crossOrigin` verilmez: yalnızca
  * `naturalWidth/Height` okunur (piksel değil), bu CORS gerektirmez. Boyut,
  * kırpılan kutunun en-boy oranını doğru kurmak için gerekir.

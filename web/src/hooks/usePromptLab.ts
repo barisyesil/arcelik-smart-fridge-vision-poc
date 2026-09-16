@@ -77,6 +77,8 @@ export function usePromptLab() {
       systemPrompt?: string;
       model: string;
       temperature: number;
+      mediaResolution?: string;
+      thinkingBudget?: string;
     }) => {
       setRunning(true);
       setRunError(null);

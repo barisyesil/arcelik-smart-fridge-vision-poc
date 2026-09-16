@@ -2,10 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { confirmUpload, createCropUpload, uploadToS3, type ApiConfig } from "../api/client";
 import type { ConfirmItem } from "../api/types";
 import type { UploadTicket } from "../hooks/useUpload";
-import { buildCropStyle, loadImageSize } from "../lib/cropImage";
+import { buildCropStyle, loadImageSize, padBoxToAspect } from "../lib/cropImage";
 import { cropToBlob } from "../lib/cropToBlob";
 import { categoryLabel, formatQuantity } from "../lib/labels";
 import { TimingBreakdown } from "./TimingBreakdown";
+
+//: Mobil ürün kartları 3:4 gösterildiği için crop'u bu orana genişletiriz; küçük
+//: kenar payı (%8) ürünün kenarının dibinden kesilmesini önler. Önizleme ile
+//: S3'e yüklenen gerçek crop AYNI şekli kullanır — kullanıcı ne görüyorsa o gider.
+const MOBILE_CROP = { ratio: 3 / 4, marginFrac: 0.08 };
 
 interface Props {
   ticket: UploadTicket;
@@ -91,7 +96,7 @@ export function DraftReviewPanel({ ticket, apiConfig, onConfirmed, onStateChange
         if (item.bounding_box && ticket.sourceBlob) {
           setRow(item.item_id, { cropStatus: "uploading" });
           try {
-            const blob = await cropToBlob(ticket.sourceBlob, item.bounding_box);
+            const blob = await cropToBlob(ticket.sourceBlob, item.bounding_box, MOBILE_CROP);
             const presign = await createCropUpload(apiConfig, ticket.uploadId);
             await uploadToS3(presign, blob, "image/jpeg");
             imageKey = presign.object_key;
@@ -145,7 +150,14 @@ export function DraftReviewPanel({ ticket, apiConfig, onConfirmed, onStateChange
             item.bounding_box && ticket.sourceObjectUrl && imageSize
               ? buildCropStyle(
                   ticket.sourceObjectUrl,
-                  item.bounding_box,
+                  // Önizleme, S3'e gidecek crop ile AYNI 3:4 şekli göstersin.
+                  padBoxToAspect(
+                    item.bounding_box,
+                    MOBILE_CROP.ratio,
+                    imageSize.width,
+                    imageSize.height,
+                    MOBILE_CROP.marginFrac,
+                  ),
                   imageSize.width,
                   imageSize.height,
                 )

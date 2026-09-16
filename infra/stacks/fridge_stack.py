@@ -137,8 +137,12 @@ class FridgeStack(Stack):
         #                     değil — inventory_api "POST /v1/uploads" rotasında
         #                     onu içeriden çağırır.
         # fridge-extractor  : handler="handlers.extractor.handler"
-        #                     512 MB, 60 sn, arm64, reserved_concurrent_executions=5,
+        #                     512 MB, 150 sn, arm64, reserved_concurrent_executions=5,
         #                     on_failure -> SqsDestination(dlq)
+        #                     Timeout, Gemini'nin geçici 503/429'larında yapılan
+        #                     üssel backoff'lu yeniden denemelere (bkz. adapters/
+        #                     vision.py) yer açacak kadar uzun: en kötü durumda
+        #                     max_attempts * per_call_timeout + backoff < 150 sn.
         #
         # Kod, build_lambda_packages.py ile önceden paketlenir (handlers/, core/,
         # adapters/ ve extractor için ARM64 wheel'ler).
@@ -184,8 +188,15 @@ class FridgeStack(Stack):
             handler="handlers.extractor.handler",
             code=lambda_.Code.from_asset(str(extractor_package)),
             memory_size=512,
-            timeout=Duration.seconds(60),
+            timeout=Duration.seconds(150),
             reserved_concurrent_executions=5,
+            # Geçici Gemini hataları (503/504/429) artık İÇERİDE, üssel backoff'la
+            # yeniden deneniyor (bkz. adapters/vision.py). Lambda'nın asenkron
+            # otomatik retry'ını da açık bırakmak çağrıları ÇARPAR (in-process
+            # denemeler × Lambda denemeleri = upload başına misli Gemini çağrısı,
+            # dolayısıyla RPD şişmesi). Bu yüzden Lambda retry'ı KAPALI: başarısız
+            # olay, in-process denemeler tükendikten sonra doğrudan DLQ'ya düşer.
+            retry_attempts=0,
             on_failure=lambda_destinations.SqsDestination(self.extractor_dlq),
             log_group=self.extractor_log_group,
             environment={

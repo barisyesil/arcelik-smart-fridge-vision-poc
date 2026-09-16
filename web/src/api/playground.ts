@@ -32,6 +32,12 @@ export interface LabMeta {
   models: ModelPricing[];
   default_model: string;
   default_prompt_id: string | null;
+  /** Görsel token çözünürlüğü seçenekleri: "default" + low/medium/high. */
+  media_resolutions: string[];
+  default_media_resolution: string;
+  /** Düşünme (thinking) seçenekleri: "default" | "off". */
+  thinking_options: string[];
+  default_thinking: string;
   has_api_key: boolean;
 }
 
@@ -50,6 +56,9 @@ export interface LabProduct {
 export interface LabUsage {
   prompt_tokens: number;
   output_tokens: number;
+  /** Gizli "düşünme" tokenları — çıktıdan ayrı, ama çıktı fiyatından faturalanır. */
+  thoughts_tokens: number;
+  cached_tokens: number;
   total_tokens: number;
 }
 
@@ -68,6 +77,9 @@ export interface ExtractResult {
   prompt_id: string;
   model: string;
   temperature: number;
+  media_resolution: string;
+  /** Uygulanan düşünme bütçesi: null = model varsayılanı, 0 = kapalı, >0 = üst sınır. */
+  thinking_budget: number | null;
   latency_ms: number;
   product_count: number;
   products: LabProduct[];
@@ -140,6 +152,8 @@ export async function runExtract(
     systemPrompt?: string;
     model: string;
     temperature: number;
+    mediaResolution?: string;
+    thinkingBudget?: string;
   },
 ): Promise<ExtractResult> {
   const form = new FormData();
@@ -148,6 +162,8 @@ export async function runExtract(
   if (params.systemPrompt) form.append("system_prompt", params.systemPrompt);
   form.append("model", params.model);
   form.append("temperature", String(params.temperature));
+  if (params.mediaResolution) form.append("media_resolution", params.mediaResolution);
+  if (params.thinkingBudget) form.append("thinking_budget", params.thinkingBudget);
 
   return parse(
     await fetch(`${base(baseUrl)}/playground/extract`, { method: "POST", body: form }),

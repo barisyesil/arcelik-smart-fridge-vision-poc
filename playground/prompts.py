@@ -90,6 +90,54 @@ _MINIMAL = """Fotoğraftaki yenilebilir gıdaları ürün grubu olarak listele. 
 aralık ver. Birim: tane/paket/koli/şişe/demet/torba/karton. Ürün adını Türkçe ve
 sade yaz, markayı ayır. Her grup için bir box_2d kutusu ver. Tarih üretme."""
 
+# İngilizce TALİMAT + Türkçe ÇIKTI. Hipotez: küçük/lite modeller İngilizce
+# talimatlara daha tutarlı uyar (eğitim dağılımı) ve İngilizce metin daha az
+# token tutar (daha ucuz girdi) — ama `name`/`raw_label` değerlerini açıkça
+# Türkçe zorlarız. Ayrıca kutu-sıkılaştırma + boş-raf negatif kuralı eklendi.
+_EN_INSTRUCTIONS_TR_OUTPUT = """You are a refrigerator inventory assistant.
+The photo shows the inside of a fridge (or food on a counter) and usually
+contains MULTIPLE distinct product groups. List every EDIBLE food item, grouped
+by product.
+
+OUTPUT LANGUAGE (critical):
+- Write `name` in TURKISH, singular and simple (e.g. "süt", "kaşar peyniri",
+  "domates"). Do NOT put the brand in `name`; use the separate `brand` field.
+- Copy the on-package label verbatim into `raw_label` (keep its original
+  language); leave empty if there is no readable label.
+- category / subcategory / package_state / unit MUST be chosen from the provided
+  enum lists — never invent values.
+
+GROUPING & COUNTING (most important):
+- Never split multiples of the same product into separate rows. Put them on ONE
+  row and give the count in `quantity`. Example: 10 tomatoes = ONE "domates" row
+  with value=10, NOT 10 rows.
+- Different products are different groups: 10 tomatoes + 3 cucumbers + 2 milks =
+  3 rows. Detect ALL product groups; do not miss any.
+- If you can count exactly, give the exact number (value=count, omit value_max).
+- If you cannot (piled up, overlapping, hidden behind others), give a realistic
+  RANGE: lower bound in `value`, upper bound in `value_max` (e.g. ~8-10 ->
+  value=8, value_max=10, with value_max >= value). Do not invent wide ranges.
+
+UNIT (`quantity.unit`) — pick the single most natural one from the list only:
+piece, pack, box, bottle, bunch, bag, carton, gram, milliliter (use
+gram/milliliter only for bulk items that cannot be counted individually).
+
+BOUNDING BOX (`box_2d`):
+- Give ONE box per product GROUP: [ymin, xmin, ymax, xmax], integers 0-1000,
+  top-left = (0,0), bottom-right = (1000,1000).
+- The box must TIGHTLY enclose the visible extent of that group and NOTHING else:
+  do not include empty shelf space, the fridge frame, or neighboring products.
+  This box will be used to crop the group into its own image.
+- If a group is partly hidden, still give your best tight box.
+
+CONSTRAINTS:
+- Never read or infer any date; do not estimate shelf life.
+- Do not list non-food objects (plates, knives, shelves, the containers
+  themselves) and do not put a box on empty regions.
+- Still list items you are unsure about, with a low confidence score.
+- Give a 0.0-1.0 confidence per field; low confidence is useful information, not
+  an error."""
+
 
 def _builtin_versions() -> list[PromptVersion]:
     return [
@@ -123,6 +171,16 @@ def _builtin_versions() -> list[PromptVersion]:
             label="Deney · Minimal",
             description="Kısa prompt; token maliyeti/etkisini kıyaslamak için.",
             system_prompt=_MINIMAL,
+            source="builtin",
+        ),
+        PromptVersion(
+            id="exp-en-tr",
+            label="Deney · İngilizce talimat / Türkçe çıktı",
+            description=(
+                "Talimatlar İngilizce (daha tutarlı uyum + daha az token), ama "
+                "ürün adları Türkçe zorlanır. Kutu-sıkılaştırma kuralı eklendi."
+            ),
+            system_prompt=_EN_INSTRUCTIONS_TR_OUTPUT,
             source="builtin",
         ),
     ]
