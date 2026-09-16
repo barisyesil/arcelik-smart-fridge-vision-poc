@@ -45,6 +45,11 @@ def item_to_json(item: InventoryItem) -> dict:
         if item.user_adjusted_freshness_date
         else None,
         "effective_fresh_until": item.effective_freshness_date.isoformat(),
+        "opened_at": item.opened_at.isoformat() if item.opened_at else None,
+        "period_after_opening_days": item.period_after_opening_days,
+        "opened_fresh_until": (
+            item.opened_fresh_until.isoformat() if item.opened_fresh_until else None
+        ),
         "freshness_basis": item.freshness_basis.value,
         "confidence": asdict(item.confidence) if item.confidence else None,
         "needs_review": item.needs_review,

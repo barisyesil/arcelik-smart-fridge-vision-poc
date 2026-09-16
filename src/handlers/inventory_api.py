@@ -27,6 +27,7 @@ from adapters.repository import (
     RepositoryError,
 )
 from core.actions import build_replacement_candidate, build_swipe_action, resulting_item_state
+from core.freshness import shelf_life_days
 from core.inventory import crop_object_key, crop_prefix, new_id
 from core.models import (
     DeviceRegistration,
@@ -456,6 +457,8 @@ _PATCHABLE_FIELDS = (
     "package_state",
     "quantity",
     "state",
+    "period_after_opening_days",
+    "user_adjusted_fresh_until",
 )
 
 
@@ -475,6 +478,15 @@ def _validate_patch_changes(changes: dict) -> str | None:
             return "quantity {value, unit} biçimine uymuyor"
         if _parse_quantity(q) is None:
             return "quantity değeri geçersiz"
+    if "period_after_opening_days" in changes:
+        days = changes["period_after_opening_days"]
+        if not isinstance(days, int) or isinstance(days, bool) or days < 1 or days > 365:
+            return "period_after_opening_days 1..365 arasında olmalı"
+    if "user_adjusted_fresh_until" in changes and changes["user_adjusted_fresh_until"] is not None:
+        try:
+            date.fromisoformat(changes["user_adjusted_fresh_until"])
+        except (TypeError, ValueError):
+            return "user_adjusted_fresh_until YYYY-MM-DD biçiminde olmalı"
     return None
 
 
@@ -499,6 +511,22 @@ def _patch_item(event: dict) -> dict:
     # yol açardı).
     if "quantity" in changes:
         changes["quantity"] = asdict(_parse_quantity(changes["quantity"]))
+    if "user_adjusted_fresh_until" in changes:
+        changes["user_adjusted_freshness_date"] = changes.pop("user_adjusted_fresh_until")
+    if changes.get("package_state") == PackageState.OPENED.value:
+        current = _get_repository().get_items(ctx.fridge_id, [item_id])
+        if current and current[0].package_state is not PackageState.OPENED:
+            changes["opened_at"] = datetime.now(UTC).isoformat()
+            if "period_after_opening_days" not in changes:
+                days, _, _, _ = shelf_life_days(
+                    current[0].category,
+                    current[0].subcategory,
+                    PackageState.OPENED,
+                )
+                changes["period_after_opening_days"] = days
+    elif changes.get("package_state") == PackageState.UNOPENED.value:
+        changes["opened_at"] = None
+        changes["period_after_opening_days"] = None
     try:
         item = _get_repository().update_item(ctx.fridge_id, item_id, changes)
     except ItemNotFound:

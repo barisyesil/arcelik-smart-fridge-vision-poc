@@ -10,7 +10,7 @@ Alan adları API kontratının parçasıdır; yeniden adlandırmak istemciyi kı
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from core.taxonomy import FoodCategory, PackageState
@@ -290,6 +290,10 @@ class InventoryItem:
     user_requested_review: bool = False
     #: Local URI ya da ileride thumbnail referansı (mobil kart görseli).
     image_ref: str | None = None
+    #: Kullanıcı ambalajı açtığında başlayan kısa ömür penceresi. Paket durumu
+    #: OPENED değilken bu alanlar boş kalır; böylece iki ayrı açılma doğruluğu yoktur.
+    opened_at: datetime | None = None
+    period_after_opening_days: int | None = None
     #: Optimistic concurrency / senkron sürümü. Her yazımda artar.
     version: int = 1
     schema_version: str = SCHEMA_VERSION
@@ -297,7 +301,18 @@ class InventoryItem:
     @property
     def effective_freshness_date(self) -> date:
         """Kontrol sıralamasında kullanılan tarih (BR-002)."""
-        return self.user_adjusted_freshness_date or self.estimated_freshness_date
+        if self.user_adjusted_freshness_date:
+            return self.user_adjusted_freshness_date
+        if self.opened_at and self.period_after_opening_days:
+            opened_limit = self.opened_at.date() + timedelta(days=self.period_after_opening_days)
+            return min(self.estimated_freshness_date, opened_limit)
+        return self.estimated_freshness_date
+
+    @property
+    def opened_fresh_until(self) -> date | None:
+        if not self.opened_at or not self.period_after_opening_days:
+            return None
+        return self.opened_at.date() + timedelta(days=self.period_after_opening_days)
 
 
 @dataclass(frozen=True)

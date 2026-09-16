@@ -220,6 +220,8 @@ def _serialize_item(item: InventoryItem) -> dict:
         "quantity": _quantity_to_dict(item.quantity),
         "estimated_freshness_date": item.estimated_freshness_date.isoformat(),
         "user_adjusted_freshness_date": _opt_date_to_str(item.user_adjusted_freshness_date),
+        "opened_at": _opt_dt_to_str(item.opened_at),
+        "period_after_opening_days": item.period_after_opening_days,
         "freshness_basis": item.freshness_basis.value,
         "created_at": _dt_to_str(item.created_at),
         "updated_at": _dt_to_str(item.updated_at),
@@ -259,6 +261,12 @@ def _deserialize_item(data: dict) -> InventoryItem:
         quantity=_quantity_from_dict(data["quantity"]) or Quantity(value=1),
         estimated_freshness_date=date.fromisoformat(data["estimated_freshness_date"]),
         user_adjusted_freshness_date=_opt_date(data.get("user_adjusted_freshness_date")),
+        opened_at=_opt_dt(data.get("opened_at")),
+        period_after_opening_days=(
+            int(data["period_after_opening_days"])
+            if data.get("period_after_opening_days") is not None
+            else None
+        ),
         freshness_basis=FreshnessBasis(data["freshness_basis"]),
         created_at=_str_to_dt(data["created_at"]),
         updated_at=_str_to_dt(data["updated_at"]),
@@ -602,6 +610,9 @@ UPDATABLE_ITEM_FIELDS = frozenset(
         "state",
         "user_requested_review",
         "next_review_at",
+        "opened_at",
+        "period_after_opening_days",
+        "user_adjusted_freshness_date",
     }
 )
 
