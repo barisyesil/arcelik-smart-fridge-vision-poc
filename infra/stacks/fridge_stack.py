@@ -14,6 +14,7 @@ from aws_cdk import aws_apigatewayv2 as apigatewayv2
 from aws_cdk import aws_apigatewayv2_authorizers as apigatewayv2_authorizers
 from aws_cdk import aws_apigatewayv2_integrations as apigatewayv2_integrations
 from aws_cdk import aws_budgets as budgets
+from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_iam as iam
@@ -36,6 +37,10 @@ class FridgeStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         self.stage = stage
+        data_removal_policy = RemovalPolicy.RETAIN if stage == "prod" else RemovalPolicy.DESTROY
+
+        def resource_name(base: str) -> str:
+            return base if stage == "dev" else f"{base}-{stage}"
 
         # ------------------------------------------------------------------
         # 1) CloudWatch Log Grupları
@@ -46,16 +51,16 @@ class FridgeStack(Stack):
         self.api_log_group = logs.LogGroup(
             self,
             "ApiLogGroup",
-            log_group_name="/aws/lambda/fridge-api",
+            log_group_name=f"/aws/lambda/{resource_name('fridge-api')}",
             retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
         self.extractor_log_group = logs.LogGroup(
             self,
             "ExtractorLogGroup",
-            log_group_name="/aws/lambda/fridge-extractor",
+            log_group_name=f"/aws/lambda/{resource_name('fridge-extractor')}",
             retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
 
         # ------------------------------------------------------------------
@@ -67,7 +72,7 @@ class FridgeStack(Stack):
         self.table = dynamodb.Table(
             self,
             "MainTable",
-            table_name="fridge-main",
+            table_name=resource_name("fridge-main"),
             partition_key=dynamodb.Attribute(
                 name="PK",
                 type=dynamodb.AttributeType.STRING,
@@ -81,7 +86,7 @@ class FridgeStack(Stack):
             write_capacity=5,
             time_to_live_attribute="expires_at",
             stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
         self.table.add_global_secondary_index(
             index_name="GSI1",
@@ -104,10 +109,10 @@ class FridgeStack(Stack):
         self.extractor_dlq = sqs.Queue(
             self,
             "ExtractorDlq",
-            queue_name="fridge-extractor-dlq",
+            queue_name=resource_name("fridge-extractor-dlq"),
             retention_period=Duration.days(14),
             encryption=sqs.QueueEncryption.SQS_MANAGED,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
 
         # ------------------------------------------------------------------
@@ -121,7 +126,7 @@ class FridgeStack(Stack):
         self.gemini_api_key = ssm.StringParameter.from_secure_string_parameter_attributes(
             self,
             "GeminiApiKey",
-            parameter_name="/smartfridge/dev/gemini-api-key",
+            parameter_name=f"/smartfridge/{stage}/gemini-api-key",
         )
 
         # ------------------------------------------------------------------
@@ -154,7 +159,7 @@ class FridgeStack(Stack):
         self.api_function = lambda_.Function(
             self,
             "ApiFunction",
-            function_name="fridge-api",
+            function_name=resource_name("fridge-api"),
             runtime=lambda_.Runtime.PYTHON_3_12,
             architecture=lambda_.Architecture.ARM_64,
             handler="handlers.inventory_api.handler",
@@ -173,7 +178,7 @@ class FridgeStack(Stack):
         self.extractor_function = lambda_.Function(
             self,
             "ExtractorFunction",
-            function_name="fridge-extractor",
+            function_name=resource_name("fridge-extractor"),
             runtime=lambda_.Runtime.PYTHON_3_12,
             architecture=lambda_.Architecture.ARM_64,
             handler="handlers.extractor.handler",
@@ -197,7 +202,11 @@ class FridgeStack(Stack):
         # localhost:5173. Olay bildirimi ObjectCreated -> extractor; prefix
         # "uploads/" filtresi şart — filtresiz bildirim sonsuz döngü riski taşır.
         # ------------------------------------------------------------------
-        raw_bucket_name = f"fridge-raw-{Aws.ACCOUNT_ID}"
+        raw_bucket_name = (
+            f"fridge-raw-{Aws.ACCOUNT_ID}"
+            if stage == "dev"
+            else f"fridge-raw-{stage}-{Aws.ACCOUNT_ID}"
+        )
         self.raw_bucket = s3.Bucket(
             self,
             "RawBucket",
@@ -219,7 +228,7 @@ class FridgeStack(Stack):
                     allowed_headers=["*"],
                 )
             ],
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
         s3_invoke_permission = lambda_.CfnPermission(
             self,
@@ -264,7 +273,7 @@ class FridgeStack(Stack):
         self.user_pool = cognito.UserPool(
             self,
             "UserPool",
-            user_pool_name="fridge-users",
+            user_pool_name=resource_name("fridge-users"),
             self_sign_up_enabled=True,
             sign_in_aliases=cognito.SignInAliases(email=True),
             auto_verify=cognito.AutoVerifiedAttrs(email=True),
@@ -275,11 +284,11 @@ class FridgeStack(Stack):
                 require_uppercase=False,
                 require_symbols=False,
             ),
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
         self.user_pool_client = self.user_pool.add_client(
             "MobileClient",
-            user_pool_client_name="fridge-mobile",
+            user_pool_client_name=resource_name("fridge-mobile"),
             generate_secret=False,  # public client — mobil uygulamada secret tutulmaz
             auth_flows=cognito.AuthFlow(user_srp=True),
             o_auth=cognito.OAuthSettings(
@@ -300,7 +309,7 @@ class FridgeStack(Stack):
         # callback/logout URL'lerine (yalnızca localhost) test amaçlı izin verir.
         self.web_client = self.user_pool.add_client(
             "WebTestClient",
-            user_pool_client_name="fridge-web-test",
+            user_pool_client_name=resource_name("fridge-web-test"),
             generate_secret=False,
             auth_flows=cognito.AuthFlow(user_srp=True),
             o_auth=cognito.OAuthSettings(
@@ -319,7 +328,13 @@ class FridgeStack(Stack):
         # olmalı, hesap ID'si bunu garanti eder.
         self.user_pool_domain = self.user_pool.add_domain(
             "Domain",
-            cognito_domain=cognito.CognitoDomainOptions(domain_prefix=f"fridge-{Aws.ACCOUNT_ID}"),
+            cognito_domain=cognito.CognitoDomainOptions(
+                domain_prefix=(
+                    f"fridge-{Aws.ACCOUNT_ID}"
+                    if stage == "dev"
+                    else f"fridge-{stage}-{Aws.ACCOUNT_ID}"
+                )
+            ),
         )
 
         # ------------------------------------------------------------------
@@ -330,14 +345,14 @@ class FridgeStack(Stack):
         self.api_access_log_group = logs.LogGroup(
             self,
             "ApiAccessLogGroup",
-            log_group_name="/aws/apigateway/fridge-api-gw",
+            log_group_name=f"/aws/apigateway/{resource_name('fridge-api-gw')}",
             retention=logs.RetentionDays.ONE_WEEK,
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
         self.http_api = apigatewayv2.HttpApi(
             self,
             "HttpApi",
-            api_name="fridge-api-gw",
+            api_name=resource_name("fridge-api-gw"),
             cors_preflight=apigatewayv2.CorsPreflightOptions(
                 allow_origins=["http://localhost:5173"],
                 allow_headers=["content-type", "authorization", "x-user-id"],
@@ -432,7 +447,7 @@ class FridgeStack(Stack):
             self,
             "MonthlyBudget",
             budget=budgets.CfnBudget.BudgetDataProperty(
-                budget_name="smartfridge-monthly-budget",
+                budget_name=resource_name("smartfridge-monthly-budget"),
                 budget_type="COST",
                 time_unit="MONTHLY",
                 budget_limit=budgets.CfnBudget.SpendProperty(
@@ -504,6 +519,61 @@ class FridgeStack(Stack):
             )
         )
         self.gemini_api_key.grant_read(self.extractor_function)
+
+        # ------------------------------------------------------------------
+        # 9.5) Operasyon alarmları — hassas veri içermeyen servis metrikleri.
+        # Alarm aksiyonları hesap seviyesinde veya dağıtım ortamında bağlanır;
+        # stack e-posta/SNS hedefini kaynak koda gömmez.
+        # ------------------------------------------------------------------
+        alarm_defaults = {
+            "evaluation_periods": 1,
+            "treat_missing_data": cloudwatch.TreatMissingData.NOT_BREACHING,
+        }
+        cloudwatch.Alarm(
+            self,
+            "ApiLambdaErrorsAlarm",
+            alarm_name=resource_name("smartfridge-api-errors"),
+            metric=self.api_function.metric_errors(period=Duration.minutes(5)),
+            threshold=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            **alarm_defaults,
+        )
+        cloudwatch.Alarm(
+            self,
+            "ExtractorLambdaErrorsAlarm",
+            alarm_name=resource_name("smartfridge-extractor-errors"),
+            metric=self.extractor_function.metric_errors(period=Duration.minutes(5)),
+            threshold=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            **alarm_defaults,
+        )
+        cloudwatch.Alarm(
+            self,
+            "ExtractorDlqAlarm",
+            alarm_name=resource_name("smartfridge-extractor-dlq-visible"),
+            metric=self.extractor_dlq.metric_approximate_number_of_messages_visible(
+                period=Duration.minutes(5)
+            ),
+            threshold=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            **alarm_defaults,
+        )
+        api_server_errors = cloudwatch.Metric(
+            namespace="AWS/ApiGateway",
+            metric_name="5xx",
+            dimensions_map={"ApiId": self.http_api.api_id},
+            statistic="Sum",
+            period=Duration.minutes(5),
+        )
+        cloudwatch.Alarm(
+            self,
+            "ApiGatewayServerErrorsAlarm",
+            alarm_name=resource_name("smartfridge-api-gateway-5xx"),
+            metric=api_server_errors,
+            threshold=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            **alarm_defaults,
+        )
 
         # ------------------------------------------------------------------
         # 10) Fridge registry seed — prototip buzdolabı ID'leri

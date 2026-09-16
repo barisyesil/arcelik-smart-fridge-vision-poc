@@ -681,14 +681,35 @@ def _put_reminder(event: dict) -> dict:
         version=int(now.timestamp()),
         enabled=bool(body.get("enabled", True)),
     )
-    _get_repository().put_reminder(reminder)
+    repo = _get_repository()
+    try:
+        repo.update_item(
+            ctx.fridge_id,
+            item_id,
+            {
+                "user_requested_review": reminder.enabled,
+                "next_review_at": scheduled_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+    except ItemNotFound:
+        return respond(404, {"error": "item_not_found", "item_id": item_id})
+    repo.put_reminder(reminder)
     return respond(200, dto.reminder_to_json(reminder))
 
 
 def _delete_reminder(event: dict) -> dict:
     ctx = resolve_context(event, _get_repository())
     item_id = path_param(event, "item_id")
-    _get_repository().delete_reminder(ctx.fridge_id, item_id)
+    repo = _get_repository()
+    try:
+        repo.update_item(
+            ctx.fridge_id,
+            item_id,
+            {"user_requested_review": False, "next_review_at": None},
+        )
+    except ItemNotFound:
+        return respond(404, {"error": "item_not_found", "item_id": item_id})
+    repo.delete_reminder(ctx.fridge_id, item_id)
     return respond_empty(204)
 
 
@@ -716,8 +737,14 @@ def _post_shopping(event: dict) -> dict:
         except ValueError:
             return respond(400, {"error": "invalid_field_value", "detail": "category"})
     now = datetime.now(UTC)
+    client_item_id = (body.get("client_item_id") or "").strip()
+    if client_item_id and (
+        len(client_item_id) > 128
+        or not all(character.isalnum() or character in "._:-" for character in client_item_id)
+    ):
+        return respond(400, {"error": "invalid_field_value", "detail": "client_item_id"})
     item = ShoppingListItem(
-        shopping_item_id=new_id("shop"),
+        shopping_item_id=client_item_id or new_id("shop"),
         fridge_id=ctx.fridge_id,
         name=name,
         state=ShoppingItemState.ACTIVE,

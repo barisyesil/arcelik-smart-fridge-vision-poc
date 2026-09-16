@@ -592,7 +592,17 @@ def _serialize_reminder(r: ItemReminder) -> dict:
 
 #: PATCH /v1/items/{id} ile değiştirilebilen alanlar (beyaz liste).
 UPDATABLE_ITEM_FIELDS = frozenset(
-    {"name", "brand", "category", "subcategory", "package_state", "quantity", "state"}
+    {
+        "name",
+        "brand",
+        "category",
+        "subcategory",
+        "package_state",
+        "quantity",
+        "state",
+        "user_requested_review",
+        "next_review_at",
+    }
 )
 
 #: PATCH /v1/shopping-lists/current/items/{id} beyaz listesi.
